@@ -3,43 +3,45 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#C1440E">
+<meta name="theme-color" content="#2E7D32">
 <title>Prato do Dia — Contador de Calorias</title>
 <link rel="manifest" href="manifest.json">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='48' fill='%23C1440E'/%3E%3Ctext x='50' y='68' font-size='55' text-anchor='middle'%3E%F0%9F%8D%BD%EF%B8%8F%3C/text%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='48' fill='%232E7D32'/%3E%3Ctext x='50' y='68' font-size='55' text-anchor='middle'%3E%F0%9F%8D%BD%EF%B8%8F%3C/text%3E%3C/svg%3E">
 <style>
 /* ============ TOKENS ============ */
-:root{
-  --paper:#FAF6EE;
-  --paper-2:#F1EADA;
-  --ink:#241F1A;
-  --ink-soft:#6B6154;
-  --line:#E3D9C4;
-  --urucum:#C1440E;
-  --urucum-dark:#9A350A;
-  --couve:#3D6B4A;
-  --couve-bg:#E4EEE6;
-  --milho:#C8941B;
-  --milho-bg:#F6ECD4;
-  --cafe:#8B5E3C;
-  --cafe-bg:#EFE4D8;
+ :root{
+  --paper:#F4F8F3;
+  --paper-2:#E7F0E6;
+  --ink:#182019;
+  --ink-soft:#617063;
+  --line:#D3DED2;
+  --urucum:#2E7D32;
+  --urucum-dark:#1B5E20;
+  --couve:#3E8E4C;
+  --couve-bg:#E2F0E4;
+  --milho:#A87818;
+  --milho-bg:#F4EBD5;
+  --cafe:#7A5B45;
+  --cafe-bg:#EFE7E0;
   --card:#FFFFFF;
-  --shadow:0 1px 2px rgba(36,31,26,.06), 0 4px 14px rgba(36,31,26,.05);
+  --shadow:0 1px 2px rgba(24,32,25,.05), 0 5px 18px rgba(24,32,25,.06);
   --radius:16px;
   --serif:Georgia,'Noto Serif','Times New Roman',serif;
   --sans:-apple-system,BlinkMacSystemFont,'Roboto','Segoe UI',sans-serif;
 }
 html[data-theme="dark"]{
-  --paper:#1B1815;
-  --paper-2:#252019;
-  --ink:#F2ECE1;
-  --ink-soft:#B3A794;
-  --line:#3A3229;
-  --card:#252019;
-  --couve-bg:#26332A;
-  --milho-bg:#332C1B;
-  --cafe-bg:#332B22;
-  --shadow:0 1px 2px rgba(0,0,0,.3), 0 4px 14px rgba(0,0,0,.25);
+  --paper:#070A08;
+  --paper-2:#0E1510;
+  --ink:#F1F5F1;
+  --ink-soft:#A9B6AA;
+  --line:#263129;
+  --card:#111812;
+  --couve-bg:#17261A;
+  --milho-bg:#2B2412;
+  --cafe-bg:#241A14;
+  --urucum:#66BB6A;
+  --urucum-dark:#43A047;
+  --shadow:0 1px 2px rgba(0,0,0,.55), 0 7px 24px rgba(0,0,0,.35);
 }
 *{box-sizing:border-box;}
 body{margin:0;}
@@ -268,6 +270,31 @@ details.calc[open] summary::before{content:"▾ ";}
 .weight-row:last-child{border-bottom:none;}
 .weight-row .wdel{background:none;border:none;color:var(--ink-soft);font-size:15px;cursor:pointer;}
 
+/* ============ DASHBOARD ============ */
+.dashboard-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px;}
+.stat-card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;box-shadow:var(--shadow);}
+.stat-card .stat-label{font-size:11px;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.04em;}
+.stat-card .stat-value{font-family:var(--serif);font-size:23px;font-weight:700;margin-top:4px;}
+.stat-card .stat-sub{font-size:11px;color:var(--ink-soft);margin-top:3px;}
+.chart-card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;margin-bottom:12px;box-shadow:var(--shadow);}
+.chart-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px;}
+.chart-head h3{font-size:15px;}
+.chart-wrap{overflow:hidden;}
+.chart-svg{width:100%;height:auto;display:block;}
+.chart-empty{padding:22px 8px;text-align:center;color:var(--ink-soft);font-size:13px;}
+.period-tabs{display:flex;gap:7px;overflow:auto;padding-bottom:3px;margin-bottom:12px;scrollbar-width:none;}
+.period-tabs::-webkit-scrollbar{display:none;}
+.period-tab{border:1px solid var(--line);background:var(--card);color:var(--ink-soft);border-radius:999px;padding:7px 12px;font-size:12px;font-weight:700;white-space:nowrap;cursor:pointer;}
+.period-tab.active{background:var(--urucum);color:#fff;border-color:var(--urucum);}
+.donut-row{display:flex;gap:14px;align-items:center;}
+.donut-legend{flex:1;display:grid;gap:8px;}
+.legend-item{display:flex;justify-content:space-between;font-size:12px;color:var(--ink-soft);}
+.legend-item b{color:var(--ink);}
+.top-food{display:flex;justify-content:space-between;gap:10px;padding:9px 0;border-bottom:1px solid var(--line);font-size:13px;}
+.top-food:last-child{border-bottom:none;}
+.top-food .rank{width:24px;color:var(--urucum);font-weight:800;}
+.top-food .food-name{flex:1;font-weight:600;}
+.top-food .food-kcal{color:var(--ink-soft);white-space:nowrap;}
 /* ============ BOTTOM NAV ============ */
 .bottomnav{
   position:fixed;bottom:0;left:0;right:0;
@@ -333,6 +360,7 @@ details.calc[open] summary::before{content:"▾ ";}
     <button data-tab="hoje" class="active"><span class="ic">🏠</span><span>Hoje</span></button>
     <button data-tab="adicionar"><span class="ic">➕</span><span>Adicionar</span></button>
     <button data-tab="historico"><span class="ic">📅</span><span>Histórico</span></button>
+    <button data-tab="dashboard"><span class="ic">📊</span><span>Dashboard</span></button>
     <button data-tab="peso"><span class="ic">⚖️</span><span>Peso</span></button>
     <button data-tab="metas"><span class="ic">⚙️</span><span>Metas</span></button>
   </nav>

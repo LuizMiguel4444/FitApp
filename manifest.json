@@ -1,6 +1,6 @@
 {
-  "name": "Prato do Dia — Contador de Calorias",
-  "short_name": "Prato do Dia",
+  "name": "FitApp — Contador de Calorias",
+  "short_name": "FitApp",
   "description": "Contador de calorias, macronutrientes e metas diárias, com banco de alimentos baseado na Tabela TACO.",
   "start_url": "./index.html",
   "scope": "./",

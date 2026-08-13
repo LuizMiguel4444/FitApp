@@ -494,23 +494,209 @@ function periodKeys(days){
   return out;
 }
 function dashboardData(days){
-  const keys=periodKeys(days);
-  const daily=keys.map(date=>({date,...dayTotals(date)}));
-  const totals=daily.reduce((a,d)=>({kcal:a.kcal+d.kcal,p:a.p+d.p,c:a.c+d.c,g:a.g+d.g}),{kcal:0,p:0,c:0,g:0});
-  const count=days||1;
-  const active=daily.filter(d=>d.kcal>0).length;
-  const top={};
-  daily.forEach(d=>{ (DB.log[d.date]||[]).forEach(e=>{ top[e.name]=(top[e.name]||0)+e.kcal; }); });
-  const leaders=Object.entries(top).sort((a,b)=>b[1]-a[1]).slice(0,6);
-  return {keys,daily,totals,avg:{kcal:totals.kcal/count,p:totals.p/count,c:totals.c/count,g:totals.g/count},active,leaders};
+  const keys = periodKeys(days);
+
+  const daily = keys.map(date => ({
+    date,
+    ...dayTotals(date),
+    hasEntries: (DB.log[date] || []).length > 0
+  }));
+
+  // Considera somente dias que realmente possuem registros.
+  // Dias sem alimentação registrada não entram no denominador
+  // e, portanto, não alteram a média ao aumentar o período.
+  const activeDays = daily.filter(day => day.hasEntries);
+
+  const totals = activeDays.reduce(
+    (acc, day) => ({
+      kcal: acc.kcal + day.kcal,
+      p: acc.p + day.p,
+      c: acc.c + day.c,
+      g: acc.g + day.g
+    }),
+    { kcal: 0, p: 0, c: 0, g: 0 }
+  );
+
+  const count = activeDays.length;
+
+  const avg = count > 0
+    ? {
+        kcal: totals.kcal / count,
+        p: totals.p / count,
+        c: totals.c / count,
+        g: totals.g / count
+      }
+    : {
+        kcal: 0,
+        p: 0,
+        c: 0,
+        g: 0
+      };
+
+  // Ranking de alimentos: somente registros existentes
+  const top = {};
+
+  activeDays.forEach(day => {
+    (DB.log[day.date] || []).forEach(entry => {
+      top[entry.name] = (top[entry.name] || 0) + entry.kcal;
+    });
+  });
+
+  const leaders = Object.entries(top)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 6);
+
+  return {
+    keys,
+    daily,
+    totals,
+    avg,
+    active: count,
+    activeDays: count,
+    leaders
+  };
 }
-function svgLine(values, labels, colorVar="var(--urucum)"){
-  const W=640,H=190,p=26; const max=Math.max(...values,1); const min=Math.min(...values,0); const range=(max-min)||1;
-  const pts=values.map((v,i)=>{const x=p+(values.length===1?0:i*(W-2*p)/(values.length-1)); const y=H-p-((v-min)/range)*(H-2*p); return [x,y];});
-  const path=pts.map((q,i)=>`${i?"L":"M"}${q[0].toFixed(1)},${q[1].toFixed(1)}`).join(" ");
-  const circles=pts.map(q=>`<circle cx="${q[0].toFixed(1)}" cy="${q[1].toFixed(1)}" r="3.5" fill="${colorVar}"/>`).join("");
-  const xlabels=labels.map((l,i)=>{if(values.length<=7||i===0||i===values.length-1||i%Math.ceil(values.length/5)===0){const x=pts[i][0];return `<text x="${x}" y="${H-5}" text-anchor="middle" font-size="10" fill="var(--ink-soft)">${l}</text>`;} return "";}).join("");
-  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block"><line x1="${p}" y1="${H-p}" x2="${W-p}" y2="${H-p}" stroke="var(--line)"/><path d="${path}" fill="none" stroke="${colorVar}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>${circles}${xlabels}</svg>`;
+function svgLine(values, labels, colorVar="var(--chart-line)"){
+  if (!values.length) return "";
+
+  const W = 680;
+  const H = 260;
+
+  const left = 56;
+  const right = 18;
+  const top = 18;
+  const bottom = 42;
+
+  const chartW = W - left - right;
+  const chartH = H - top - bottom;
+
+  const rawMin = Math.min(...values);
+  const rawMax = Math.max(...values);
+
+  // Evita gráfico "achatado" quando todos os valores são iguais.
+  const padding = rawMax === rawMin
+    ? Math.max(rawMax * 0.10, 10)
+    : (rawMax - rawMin) * 0.10;
+
+  const min = Math.max(0, rawMin - padding);
+  const max = rawMax + padding;
+  const range = max - min || 1;
+
+  const xStep = values.length > 1
+    ? chartW / (values.length - 1)
+    : 0;
+
+  const points = values.map((value, index) => {
+    const x = left + index * xStep;
+    const y = top + chartH - ((value - min) / range) * chartH;
+    return { x, y, value };
+  });
+
+  // 5 divisões no eixo Y
+  const yTicks = 5;
+
+  const grid = Array.from({ length: yTicks + 1 }, (_, i) => {
+    const ratio = i / yTicks;
+    const y = top + ratio * chartH;
+    const value = max - ratio * range;
+
+    return `
+      <line
+        x1="${left}"
+        y1="${y.toFixed(1)}"
+        x2="${W - right}"
+        y2="${y.toFixed(1)}"
+        stroke="var(--line)"
+        stroke-width="1"
+      />
+      <text
+        x="${left - 8}"
+        y="${(y + 4).toFixed(1)}"
+        text-anchor="end"
+        font-size="11"
+        fill="var(--ink-soft)"
+      >${n0(value)}</text>
+    `;
+  }).join("");
+
+  // Eixo X: no máximo 7 rótulos
+  const maxXLabels = 7;
+  const xEvery = values.length <= maxXLabels
+    ? 1
+    : Math.ceil((values.length - 1) / (maxXLabels - 1));
+
+  const xLabels = labels.map((label, index) => {
+    const isLast = index === labels.length - 1;
+
+    if (index !== 0 && !isLast && index % xEvery !== 0) {
+      return "";
+    }
+
+    const p = points[index];
+
+    return `
+      <text
+        x="${p.x.toFixed(1)}"
+        y="${H - 12}"
+        text-anchor="middle"
+        font-size="10"
+        fill="var(--ink-soft)"
+      >${label}</text>
+    `;
+  }).join("");
+
+  const path = points.map((p, index) =>
+    `${index === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`
+  ).join(" ");
+
+  const dots = points.map(p => `
+    <circle
+      cx="${p.x.toFixed(1)}"
+      cy="${p.y.toFixed(1)}"
+      r="3.5"
+      fill="var(--chart-point)"
+    />
+  `).join("");
+
+  return `
+    <svg
+      viewBox="0 0 ${W} ${H}"
+      style="width:100%;height:auto;display:block;"
+      preserveAspectRatio="none"
+    >
+      ${grid}
+
+      <line
+        x1="${left}"
+        y1="${top + chartH}"
+        x2="${W - right}"
+        y2="${top + chartH}"
+        stroke="var(--ink-soft)"
+        stroke-width="1"
+      />
+
+      <line
+        x1="${left}"
+        y1="${top}"
+        x2="${left}"
+        y2="${top + chartH}"
+        stroke="var(--ink-soft)"
+        stroke-width="1"
+      />
+
+      <path
+        d="${path}"
+        fill="none"
+        stroke="${colorVar}"
+        stroke-width="3"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      />
+
+      ${dots}
+      ${xLabels}
+    </svg>
+  `;
 }
 function renderDashboard(){
   const el=document.getElementById("tab-dashboard");
@@ -532,7 +718,21 @@ function renderDashboard(){
     </div>
     <div class="chart-card">
       <h3>Calorias por dia</h3>
-      ${d.active?svgLine(d.daily.map(x=>x.kcal),d.daily.map(x=>x.date.slice(8,10))):`<div class="empty-hint">Ainda não há registros suficientes para este período. Adicione alimentos na aba Adicionar.</div>`}
+      ${
+        d.active
+          ? (() => {
+              const chartDays = d.daily.filter(x => x.hasEntries);
+
+              return svgLine(
+                chartDays.map(x => x.kcal),
+                chartDays.map(x => {
+                  const [year, month, day] = x.date.split("-");
+                  return `${day}/${month}`;
+                })
+              );
+            })()
+          : `<div class="empty-hint">Ainda não há registros suficientes para este período. Adicione alimentos na aba Adicionar.</div>`
+      }
     </div>
     <div class="chart-card"><h3>Macronutrientes médios</h3>
       ${macroTotal>0?`<div class="bar-row"><span>Proteína</span><div class="bar-track"><div class="bar-fill" style="width:${Math.min(100,(d.avg.p/(g.p||d.avg.p||1))*100)}%"></div></div><b>${n1(d.avg.p)} g</b></div>
@@ -641,23 +841,172 @@ function renderPeso(){
 }
 
 function weightSVG(data){
-  const W=300,H=90,pad=10;
-  const weights = data.map(d=>d.kg);
-  const min = Math.min(...weights), max = Math.max(...weights);
-  const range = (max-min)||1;
-  const stepX = data.length>1 ? (W-2*pad)/(data.length-1) : 0;
-  const pts = data.map((d,i)=>{
-    const x = pad + i*stepX;
-    const y = H-pad - ((d.kg-min)/range)*(H-2*pad);
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
-  }).join(" ");
-  const first = data[0], last = data[data.length-1];
-  const diff = last.kg-first.kg;
-  const diffTxt = (diff>=0?"+":"")+n1(diff)+" kg no período";
-  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;">
-    <polyline points="${pts}" fill="none" stroke="var(--urucum)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-  </svg>
-  <div style="font-size:12px;color:var(--ink-soft);text-align:center;margin-top:4px;">${diffTxt} · ${n1(min)}–${n1(max)} kg</div>`;
+  if (!data || data.length < 2) return "";
+
+  const W = 680;
+  const H = 260;
+
+  const left = 56;
+  const right = 18;
+  const top = 18;
+  const bottom = 42;
+
+  const chartW = W - left - right;
+  const chartH = H - top - bottom;
+
+  const weights = data.map(d => d.kg);
+
+  const rawMin = Math.min(...weights);
+  const rawMax = Math.max(...weights);
+
+  const padding = rawMax === rawMin
+    ? Math.max(rawMax * 0.02, 0.5)
+    : (rawMax - rawMin) * 0.10;
+
+  const min = Math.max(0, rawMin - padding);
+  const max = rawMax + padding;
+  const range = max - min || 1;
+
+  const xStep = chartW / (data.length - 1);
+
+  const points = data.map((item, index) => {
+    const x = left + index * xStep;
+    const y = top + chartH - ((item.kg - min) / range) * chartH;
+
+    return {
+      x,
+      y,
+      kg: item.kg
+    };
+  });
+
+  const yTicks = 5;
+
+  const grid = Array.from({ length: yTicks + 1 }, (_, i) => {
+    const ratio = i / yTicks;
+    const y = top + ratio * chartH;
+    const value = max - ratio * range;
+
+    return `
+      <line
+        x1="${left}"
+        y1="${y.toFixed(1)}"
+        x2="${W - right}"
+        y2="${y.toFixed(1)}"
+        stroke="var(--line)"
+        stroke-width="1"
+      />
+
+      <text
+        x="${left - 8}"
+        y="${(y + 4).toFixed(1)}"
+        text-anchor="end"
+        font-size="11"
+        fill="var(--ink-soft)"
+      >${n1(value)}</text>
+    `;
+  }).join("");
+
+  const maxXLabels = 7;
+
+  const xEvery = data.length <= maxXLabels
+    ? 1
+    : Math.ceil((data.length - 1) / (maxXLabels - 1));
+
+  const xLabels = data.map((item, index) => {
+    const isLast = index === data.length - 1;
+
+    if (index !== 0 && !isLast && index % xEvery !== 0) {
+      return "";
+    }
+
+    const [year, month, day] = item.date.split("-");
+    const label = `${day}/${month}`;
+
+    const p = points[index];
+
+    return `
+      <text
+        x="${p.x.toFixed(1)}"
+        y="${H - 12}"
+        text-anchor="middle"
+        font-size="10"
+        fill="var(--ink-soft)"
+      >${label}</text>
+    `;
+  }).join("");
+
+  const path = points.map((p, index) =>
+    `${index === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`
+  ).join(" ");
+
+  const dots = points.map(p => `
+    <circle
+      cx="${p.x.toFixed(1)}"
+      cy="${p.y.toFixed(1)}"
+      r="3.5"
+      fill="var(--chart-point)"
+    />
+  `).join("");
+
+  const first = data[0];
+  const last = data[data.length - 1];
+
+  const diff = last.kg - first.kg;
+
+  const diffTxt =
+    `${diff >= 0 ? "+" : ""}${n1(diff)} kg no período`;
+
+  return `
+    <svg
+      viewBox="0 0 ${W} ${H}"
+      style="width:100%;height:auto;display:block;"
+      preserveAspectRatio="none"
+    >
+      ${grid}
+
+      <line
+        x1="${left}"
+        y1="${top + chartH}"
+        x2="${W - right}"
+        y2="${top + chartH}"
+        stroke="var(--ink-soft)"
+        stroke-width="1"
+      />
+
+      <line
+        x1="${left}"
+        y1="${top}"
+        x2="${left}"
+        y2="${top + chartH}"
+        stroke="var(--ink-soft)"
+        stroke-width="1"
+      />
+
+      <path
+        d="${path}"
+        fill="none"
+        stroke="var(--chart-line)"
+        stroke-width="3"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      />
+
+      ${dots}
+      ${xLabels}
+    </svg>
+
+    <div
+      style="
+        font-size:12px;
+        color:var(--ink-soft);
+        text-align:center;
+        margin-top:6px;
+      "
+    >
+      ${diffTxt} · ${n1(rawMin)}–${n1(rawMax)} kg
+    </div>
+  `;
 }
 
 // ============================================================

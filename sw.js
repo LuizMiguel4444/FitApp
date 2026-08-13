@@ -1,9 +1,9 @@
-// Service worker do FitApp.
+// Service worker do "Prato do Dia".
 // Só entra em ação se o app for aberto via http(s) (ex: hospedado no GitHub Pages).
 // Ao abrir o index.html direto do celular (file://), o navegador ignora isso
 // automaticamente — o app funciona normalmente do mesmo jeito, via localStorage.
 
-const CACHE = "fitapp-v2";
+const CACHE = "prato-do-dia-v4";
 const ASSETS = [
   "./",
   "./index.html",

@@ -15,7 +15,6 @@ let DB = {
 
 // ---------- estado de navegação (não persistido) ----------
 let currentTab = "hoje";
-let dashboardPeriod = 7;
 let addCat = "proteina";
 let addSearch = "";
 let openFoodId = null;
@@ -57,6 +56,12 @@ function numVal(id, fallback){
 function allFoods(){ return FOODS.concat(DB.customFoods); }
 function findFood(id){ return allFoods().find(f => f.id === id); }
 
+function normalizeCustomFood(f){
+  if(!f || !f.name) return null;
+  return { id:String(f.id||("custom_"+uid())), name:String(f.name), cat:String(f.cat||"outro"), kcal:Number(f.kcal)||0, p:Number(f.p)||0, c:Number(f.c)||0, g:Number(f.g)||0 };
+}
+
+
 // ============ persistência ============
 function loadDB(){
   try{
@@ -65,7 +70,7 @@ function loadDB(){
       const parsed = JSON.parse(raw);
       DB = Object.assign({}, DB, parsed);
       DB.goals = Object.assign({ kcal:2709, p:187, c:321, g:75 }, parsed.goals||{});
-      DB.customFoods = parsed.customFoods || [];
+      DB.customFoods = (parsed.customFoods || []).map(normalizeCustomFood).filter(Boolean);
       DB.log = parsed.log || {};
       DB.weight = parsed.weight || [];
       DB.theme = parsed.theme || "light";
@@ -106,7 +111,9 @@ function closeModal(){
 function switchTab(tab){
   currentTab = tab;
   document.querySelectorAll(".tab").forEach(s => s.classList.add("hidden"));
-  document.getElementById("tab-"+tab).classList.remove("hidden");
+  const target = document.getElementById("tab-"+tab);
+  if(!target){ currentTab="hoje"; return switchTab("hoje"); }
+  target.classList.remove("hidden");
   document.querySelectorAll(".bottomnav button").forEach(b=>{
     b.classList.toggle("active", b.dataset.tab === tab);
   });
@@ -116,9 +123,9 @@ function switchTab(tab){
 function renderCurrentTab(){
   if(currentTab==="hoje") renderHoje();
   else if(currentTab==="adicionar") renderAdicionar();
+  else if(currentTab==="dashboard") renderDashboard();
   else if(currentTab==="historico") renderHistorico();
   else if(currentTab==="peso") renderPeso();
-  else if(currentTab==="dashboard") renderDashboard();
   else if(currentTab==="metas") renderMetas();
 }
 
@@ -287,7 +294,7 @@ function renderAdicionar(){
           <div class="fmeta">${n0(f.kcal)} kcal · P ${n1(f.p)} · C ${n1(f.c)} · G ${n1(f.g)} <span style="opacity:.7;">/100g</span></div>
         </div>
         <div style="display:flex;align-items:center;gap:8px;">
-          ${isCustom ? `<div style="display:flex;gap:4px;"><button data-action="editcustom" style="background:none;border:none;color:var(--ink-soft);font-size:15px;">✎</button><button data-action="delcustom" style="background:none;border:none;color:var(--ink-soft);font-size:15px;">🗑</button></div>` : ``}
+          ${isCustom ? `<button data-action="editcustom" style="background:none;border:none;color:var(--ink-soft);font-size:15px;">✏️</button><button data-action="delcustom" style="background:none;border:none;color:var(--ink-soft);font-size:15px;">🗑</button>` : ``}
           <span class="fkcal">▾</span>
         </div>
       </div>
@@ -357,11 +364,23 @@ function renderAdicionar(){
       renderAdicionar();
     });
   });
-  el.querySelectorAll('[data-action="delcustom"]').forEach(btn=>{
-    btn.addEventListener("click", (ev)=>{ ev.stopPropagation(); deleteCustomFood(btn.closest(".food-card").dataset.food); });
-  });
   el.querySelectorAll('[data-action="editcustom"]').forEach(btn=>{
-    btn.addEventListener("click", (ev)=>{ ev.stopPropagation(); const food=findFood(btn.closest(".food-card").dataset.food); if(food) openCustomFoodModal(food); });
+    btn.addEventListener("click", (ev)=>{
+      ev.stopPropagation();
+      const id = btn.closest(".food-card").dataset.food;
+      openCustomFoodModal(id);
+    });
+  });
+  el.querySelectorAll('[data-action="delcustom"]').forEach(btn=>{
+    btn.addEventListener("click", (ev)=>{
+      ev.stopPropagation();
+      const id = btn.closest(".food-card").dataset.food;
+      if(confirm("Excluir este alimento personalizado? Os registros já feitos com ele não serão afetados.")){
+        DB.customFoods = DB.customFoods.filter(f=>f.id!==id);
+        saveDB();
+        renderAdicionar();
+      }
+    });
   });
   el.querySelectorAll('[data-grams]').forEach(inp=>{
     inp.addEventListener("input", ()=>{
@@ -415,34 +434,33 @@ function addEntry(f, grams, meal){
   toast(`✓ ${f.name} adicionado em ${quando}`);
 }
 
-function openCustomFoodModal(food=null){
-  const isEdit = !!food;
-  const f = food || { name:"", cat:"proteina", kcal:"", p:"", c:"", g:"" };
+function openCustomFoodModal(editId=null){
+  const existing = editId ? DB.customFoods.find(f=>f.id===editId) : null;
   openModal(`
-    <h3>${isEdit ? "Editar alimento" : "Novo alimento"}</h3>
-    <p class="desc">Informe os valores nutricionais referentes a <b>100 g</b> do alimento.</p>
-    <div class="field"><label>Nome</label><input type="text" id="cf-name" value="${esc(f.name)}" placeholder="Ex: Arroz carreteiro"></div>
+    <h3>${existing ? "Editar alimento" : "Novo alimento"}</h3>
+    <div class="field"><label>Nome</label><input type="text" id="cf-name" value="${existing?esc(existing.name):""}" placeholder="Ex: Lasanha caseira"></div>
     <div class="field"><label>Categoria</label>
       <select id="cf-cat">
-        ${Object.keys(CATS).filter(k=>k!=="custom").map(k=>`<option value="${k}" ${k===f.cat?"selected":""}>${CATS[k].icon} ${CATS[k].label}</option>`).join("")}
+        ${Object.keys(CATS).filter(k=>k!=="custom").map(k=>`<option value="${k}" ${existing&&existing.cat===k?"selected":""}>${CATS[k].icon} ${CATS[k].label}</option>`).join("")}
       </select>
     </div>
+    <p class="desc" style="margin-top:6px;">Informe os valores nutricionais para <b>100 g</b> do alimento.</p>
     <div class="grid2">
-      <div class="field"><label>Calorias (kcal)</label><input type="text" id="cf-kcal" inputmode="decimal" value="${f.kcal}"></div>
-      <div class="field"><label>Proteína (g)</label><input type="text" id="cf-p" inputmode="decimal" value="${f.p}"></div>
-      <div class="field"><label>Carboidrato (g)</label><input type="text" id="cf-c" inputmode="decimal" value="${f.c}"></div>
-      <div class="field"><label>Gordura (g)</label><input type="text" id="cf-g" inputmode="decimal" value="${f.g}"></div>
+      <div class="field"><label>Calorias (kcal)</label><input type="text" id="cf-kcal" inputmode="decimal" value="${existing?existing.kcal:""}"></div>
+      <div class="field"><label>Proteína (g)</label><input type="text" id="cf-p" inputmode="decimal" value="${existing?existing.p:""}"></div>
+      <div class="field"><label>Carboidrato (g)</label><input type="text" id="cf-c" inputmode="decimal" value="${existing?existing.c:""}"></div>
+      <div class="field"><label>Gordura (g)</label><input type="text" id="cf-g" inputmode="decimal" value="${existing?existing.g:""}"></div>
     </div>
     <div style="display:flex;gap:10px;margin-top:8px;">
       <button class="btn secondary" id="cf-cancel" style="width:auto;flex:1;">Cancelar</button>
-      <button class="btn" id="cf-save" style="flex:1;">${isEdit ? "Salvar alterações" : "Salvar alimento"}</button>
+      <button class="btn" id="cf-save" style="flex:1;">${existing?"Salvar alterações":"Salvar alimento"}</button>
     </div>
   `);
   document.getElementById("cf-cancel").addEventListener("click", closeModal);
-  document.getElementById("cf-save").addEventListener("click", ()=>saveCustomFood(food?.id || null));
+  document.getElementById("cf-save").addEventListener("click", ()=>saveCustomFood(editId));
 }
 
-function saveCustomFood(existingId=null){
+function saveCustomFood(editId=null){
   const name = document.getElementById("cf-name").value.trim();
   const cat = document.getElementById("cf-cat").value;
   const kcal = numVal("cf-kcal");
@@ -450,28 +468,81 @@ function saveCustomFood(existingId=null){
   const c = numVal("cf-c");
   const g = numVal("cf-g");
   if(!name){ alert("Dê um nome para o alimento."); return; }
-  if([kcal,p,c,g].some(v=>!Number.isFinite(v)||v<0)){ alert("Informe valores nutricionais válidos."); return; }
-  const dup = allFoods().some(x=>x.id!==existingId && x.name.toLowerCase()===name.toLowerCase());
+  if([kcal,p,c,g].some(v=>v<0)){ alert("Os valores nutricionais não podem ser negativos."); return; }
+  const dup = allFoods().some(x=>x.id!==editId && x.name.toLowerCase()===name.toLowerCase());
   if(dup){ alert("Já existe um alimento com esse nome."); return; }
-  if(existingId){
-    const idx = DB.customFoods.findIndex(x=>x.id===existingId);
-    if(idx>=0) DB.customFoods[idx] = { ...DB.customFoods[idx], name, cat, kcal, p, c, g };
-  }else{
-    DB.customFoods.push({ id:"custom_"+uid(), name, cat, kcal, p, c, g });
-  }
-  saveDB();
-  closeModal();
-  addCat = "custom"; addSearch="";
-  renderAdicionar();
-  toast(existingId ? "✓ Alimento atualizado!" : "✓ Alimento cadastrado!");
+  const item = normalizeCustomFood({id:editId||("custom_"+uid()),name,cat,kcal,p,c,g});
+  if(editId){
+    const i=DB.customFoods.findIndex(f=>f.id===editId);
+    if(i>=0) DB.customFoods[i]=item;
+  }else DB.customFoods.push(item);
+  saveDB(); closeModal(); addCat="custom"; addSearch=""; renderAdicionar(); toast(editId ? "✓ Alimento atualizado!" : "✓ Alimento cadastrado!");
 }
 
-function deleteCustomFood(id){
-  if(confirm("Excluir este alimento personalizado? Os registros já feitos não serão afetados.")){
-    DB.customFoods = DB.customFoods.filter(f=>f.id!==id);
-    saveDB();
-    renderAdicionar();
-  }
+// ============================================================
+// TAB: DASHBOARD
+// ============================================================
+let dashPeriod = 7;
+
+function dashboardEntries(){
+  const keys = Object.keys(DB.log || {}).sort();
+  return keys.flatMap(d => (DB.log[d]||[]).map(e => ({...e, date:d})));
+}
+function periodKeys(days){
+  const out=[]; const base=new Date(); base.setHours(0,0,0,0);
+  for(let i=days-1;i>=0;i--){ const d=new Date(base); d.setDate(base.getDate()-i); out.push(d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0")); }
+  return out;
+}
+function dashboardData(days){
+  const keys=periodKeys(days);
+  const daily=keys.map(date=>({date,...dayTotals(date)}));
+  const totals=daily.reduce((a,d)=>({kcal:a.kcal+d.kcal,p:a.p+d.p,c:a.c+d.c,g:a.g+d.g}),{kcal:0,p:0,c:0,g:0});
+  const count=days||1;
+  const active=daily.filter(d=>d.kcal>0).length;
+  const top={};
+  daily.forEach(d=>{ (DB.log[d.date]||[]).forEach(e=>{ top[e.name]=(top[e.name]||0)+e.kcal; }); });
+  const leaders=Object.entries(top).sort((a,b)=>b[1]-a[1]).slice(0,6);
+  return {keys,daily,totals,avg:{kcal:totals.kcal/count,p:totals.p/count,c:totals.c/count,g:totals.g/count},active,leaders};
+}
+function svgLine(values, labels, colorVar="var(--urucum)"){
+  const W=640,H=190,p=26; const max=Math.max(...values,1); const min=Math.min(...values,0); const range=(max-min)||1;
+  const pts=values.map((v,i)=>{const x=p+(values.length===1?0:i*(W-2*p)/(values.length-1)); const y=H-p-((v-min)/range)*(H-2*p); return [x,y];});
+  const path=pts.map((q,i)=>`${i?"L":"M"}${q[0].toFixed(1)},${q[1].toFixed(1)}`).join(" ");
+  const circles=pts.map(q=>`<circle cx="${q[0].toFixed(1)}" cy="${q[1].toFixed(1)}" r="3.5" fill="${colorVar}"/>`).join("");
+  const xlabels=labels.map((l,i)=>{if(values.length<=7||i===0||i===values.length-1||i%Math.ceil(values.length/5)===0){const x=pts[i][0];return `<text x="${x}" y="${H-5}" text-anchor="middle" font-size="10" fill="var(--ink-soft)">${l}</text>`;} return "";}).join("");
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block"><line x1="${p}" y1="${H-p}" x2="${W-p}" y2="${H-p}" stroke="var(--line)"/><path d="${path}" fill="none" stroke="${colorVar}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>${circles}${xlabels}</svg>`;
+}
+function renderDashboard(){
+  const el=document.getElementById("tab-dashboard");
+  const d=dashboardData(dashPeriod), g=DB.goals||{};
+  const currentWeight=(DB.weight||[]).slice().sort((a,b)=>a.date.localeCompare(b.date)).at(-1);
+  const adherence=d.daily.filter(x=>x.kcal>0 && g.kcal>0 && x.kcal<=g.kcal*1.05).length;
+  const kcalMax=Math.max(g.kcal||1,...d.daily.map(x=>x.kcal),1);
+  const macroTotal=d.avg.p+d.avg.c+d.avg.g;
+  el.innerHTML=`
+    <div class="section-title">Dashboard</div>
+    <div class="period-tabs">
+      ${[7,14,30,90].map(p=>`<button class="period-tab ${p===dashPeriod?"active":""}" data-period="${p}">${p} dias</button>`).join("")}
+    </div>
+    <div class="dashboard-grid" style="margin-top:12px;">
+      <div class="kpi-card"><div class="kpi-label">Média kcal</div><div class="kpi-value">${n0(d.avg.kcal)}</div><div class="kpi-sub">meta ${n0(g.kcal||0)} kcal</div></div>
+      <div class="kpi-card"><div class="kpi-label">Proteína</div><div class="kpi-value">${n0(d.avg.p)} g</div><div class="kpi-sub">meta ${n0(g.p||0)} g</div></div>
+      <div class="kpi-card"><div class="kpi-label">Peso</div><div class="kpi-value">${currentWeight?n1(currentWeight.kg)+" kg":"—"}</div><div class="kpi-sub">último registro</div></div>
+      <div class="kpi-card"><div class="kpi-label">Aderência</div><div class="kpi-value">${adherence}/${d.active}</div><div class="kpi-sub">dias dentro da meta</div></div>
+    </div>
+    <div class="chart-card">
+      <h3>Calorias por dia</h3>
+      ${d.active?svgLine(d.daily.map(x=>x.kcal),d.daily.map(x=>x.date.slice(8,10))):`<div class="empty-hint">Ainda não há registros suficientes para este período. Adicione alimentos na aba Adicionar.</div>`}
+    </div>
+    <div class="chart-card"><h3>Macronutrientes médios</h3>
+      ${macroTotal>0?`<div class="bar-row"><span>Proteína</span><div class="bar-track"><div class="bar-fill" style="width:${Math.min(100,(d.avg.p/(g.p||d.avg.p||1))*100)}%"></div></div><b>${n1(d.avg.p)} g</b></div>
+      <div class="bar-row"><span>Carboidrato</span><div class="bar-track"><div class="bar-fill" style="width:${Math.min(100,(d.avg.c/(g.c||d.avg.c||1))*100)}%"></div></div><b>${n1(d.avg.c)} g</b></div>
+      <div class="bar-row"><span>Gordura</span><div class="bar-track"><div class="bar-fill" style="width:${Math.min(100,(d.avg.g/(g.g||d.avg.g||1))*100)}%"></div></div><b>${n1(d.avg.g)} g</b></div>`:`<div class="empty-hint">Sem dados de macronutrientes no período.</div>`}
+    </div>
+    <div class="chart-card"><h3>Alimentos que mais contribuíram para as calorias</h3>
+      ${d.leaders.length?d.leaders.map((x,i)=>`<div class="bar-row"><span>${i+1}. ${esc(x[0])}</span><div class="bar-track"><div class="bar-fill" style="width:${Math.max(4,Math.min(100,(x[1]/Math.max(d.leaders[0][1],1))*100))}%"></div></div><b>${n0(x[1])} kcal</b></div>`).join(""):`<div class="empty-hint">Ainda não há alimentos registrados.</div>`}
+    </div>`;
+  el.querySelectorAll('.period-tab').forEach(btn=>btn.addEventListener('click',()=>{dashPeriod=Number(btn.dataset.period);renderDashboard();}));
 }
 
 // ============================================================
@@ -587,105 +658,6 @@ function weightSVG(data){
     <polyline points="${pts}" fill="none" stroke="var(--urucum)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
   </svg>
   <div style="font-size:12px;color:var(--ink-soft);text-align:center;margin-top:4px;">${diffTxt} · ${n1(min)}–${n1(max)} kg</div>`;
-}
-
-// ============================================================
-// TAB: DASHBOARD
-// ============================================================
-function dateOffsetKey(baseKey, days){
-  const [y,m,d]=baseKey.split("-").map(Number);
-  const dt=new Date(y,m-1,d); dt.setDate(dt.getDate()+days);
-  return dt.getFullYear()+"-"+String(dt.getMonth()+1).padStart(2,"0")+"-"+String(dt.getDate()).padStart(2,"0");
-}
-
-function getPeriodDates(days){
-  const today=todayKey();
-  const dates=[];
-  for(let i=days-1;i>=0;i--) dates.push(dateOffsetKey(today,-i));
-  return dates;
-}
-
-function periodTotals(days){
-  const dates=getPeriodDates(days);
-  const data=dates.map(d=>({date:d,...dayTotals(d)}));
-  const sum=data.reduce((a,x)=>({kcal:a.kcal+x.kcal,p:a.p+x.p,c:a.c+x.c,g:a.g+x.g}),{kcal:0,p:0,c:0,g:0});
-  const logged=data.filter(x=>x.kcal>0).length;
-  return {dates,data,sum,logged,avg:{kcal:logged?sum.kcal/logged:0,p:logged?sum.p/logged:0,c:logged?sum.c/logged:0,g:logged?sum.g/logged:0}};
-}
-
-function dashboardLineChart(data, key, goal){
-  const values=data.map(x=>x[key]);
-  const W=330,H=150,px=30,py=18;
-  if(!values.some(v=>v>0)) return `<div class="chart-empty">Ainda não há registros suficientes para este gráfico.</div>`;
-  const max=Math.max(goal||0,...values,1)*1.15;
-  const step=data.length>1?(W-px-8)/(data.length-1):0;
-  const pts=data.map((d,i)=>`${(px+i*step).toFixed(1)},${(H-py-(d[key]/max)*(H-py*2)).toFixed(1)}`).join(" ");
-  const goalY=goal?H-py-(goal/max)*(H-py*2):null;
-  const labels=data.map((d,i)=>i%Math.max(1,Math.ceil(data.length/5))===0?`<text x="${(px+i*step).toFixed(1)}" y="146" text-anchor="middle" fill="var(--ink-soft)" font-size="9">${d.date.slice(8,10)}/${d.date.slice(5,7)}</text>`:"").join("");
-  return `<svg class="chart-svg" viewBox="0 0 ${W} ${H}" role="img">
-    <line x1="${px}" y1="${H-py}" x2="${W}" y2="${H-py}" stroke="var(--line)"/>
-    ${goalY!==null?`<line x1="${px}" y1="${goalY}" x2="${W}" y2="${goalY}" stroke="var(--urucum)" stroke-dasharray="5 4" opacity=".55"/>`:``}
-    <polyline points="${pts}" fill="none" stroke="var(--urucum)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
-    ${data.map((d,i)=>`<circle cx="${(px+i*step).toFixed(1)}" cy="${(H-py-(d[key]/max)*(H-py*2)).toFixed(1)}" r="2.8" fill="var(--urucum)"/>`).join("")}
-    ${labels}
-  </svg>`;
-}
-
-function dashboardBars(data){
-  if(!data.some(d=>d.kcal>0)) return `<div class="chart-empty">Registre refeições para comparar consumo e meta.</div>`;
-  const W=330,H=160,base=126,barW=Math.max(8,Math.min(18,(W-44)/data.length-3));
-  const max=Math.max(DB.goals.kcal,...data.map(d=>d.kcal),1);
-  const gap=(W-42)/data.length;
-  return `<svg class="chart-svg" viewBox="0 0 ${W} ${H}" role="img">
-    <line x1="20" y1="${base}" x2="${W-10}" y2="${base}" stroke="var(--line)"/>
-    ${data.map((d,i)=>{const x=28+i*gap; const h=(d.kcal/max)*92; return `<rect x="${x}" y="${base-h}" width="${barW}" height="${h}" rx="4" fill="var(--couve)"/><text x="${x+barW/2}" y="144" text-anchor="middle" fill="var(--ink-soft)" font-size="8">${d.date.slice(8,10)}</text>`;}).join("")}
-    <line x1="20" y1="${base-(DB.goals.kcal/max)*92}" x2="${W-10}" y2="${base-(DB.goals.kcal/max)*92}" stroke="var(--urucum)" stroke-dasharray="5 4" opacity=".65"/>
-  </svg>`;
-}
-
-function topFoods(days){
-  const dates=getPeriodDates(days); const map={};
-  dates.forEach(d=>(DB.log[d]||[]).forEach(e=>{ if(!map[e.name]) map[e.name]={name:e.name,kcal:0,grams:0}; map[e.name].kcal+=e.kcal; map[e.name].grams+=e.grams; }));
-  return Object.values(map).sort((a,b)=>b.kcal-a.kcal).slice(0,5);
-}
-
-function renderDashboard(){
-  const el=document.getElementById("tab-dashboard");
-  const p=periodTotals(dashboardPeriod);
-  const adherence=p.logged?Math.round((p.data.filter(d=>d.kcal>0 && d.kcal<=DB.goals.kcal).length/p.logged)*100):0;
-  const top=topFoods(dashboardPeriod);
-  const macroSum=p.avg.p+p.avg.c+p.avg.g;
-  const shareP=macroSum?p.avg.p/macroSum:0, shareC=macroSum?p.avg.c/macroSum:0, shareG=macroSum?p.avg.g/macroSum:0;
-  el.innerHTML=`
-    <div class="section-title">Dashboard</div>
-    <div class="period-tabs">${[7,14,30,90].map(d=>`<button class="period-tab ${dashboardPeriod===d?"active":""}" data-period="${d}">${d} dias</button>`).join("")}</div>
-    <div class="dashboard-grid">
-      <div class="stat-card"><div class="stat-label">Média kcal</div><div class="stat-value">${n0(p.avg.kcal)}</div><div class="stat-sub">${p.logged} dia(s) registrado(s)</div></div>
-      <div class="stat-card"><div class="stat-label">Aderência</div><div class="stat-value">${adherence}%</div><div class="stat-sub">dias até a meta</div></div>
-      <div class="stat-card"><div class="stat-label">Proteína</div><div class="stat-value">${n1(p.avg.p)} g</div><div class="stat-sub">média por dia</div></div>
-      <div class="stat-card"><div class="stat-label">Peso atual</div><div class="stat-value">${(DB.weight&&DB.weight.length)?n1(DB.weight.slice().sort((a,b)=>a.date>b.date?-1:1)[0].kg):"—"}</div><div class="stat-sub">kg</div></div>
-    </div>
-    <div class="chart-card"><div class="chart-head"><h3>Calorias por dia</h3><span class="stat-sub">linha = meta</span></div><div class="chart-wrap">${dashboardBars(p.data)}</div></div>
-    <div class="chart-card"><div class="chart-head"><h3>Evolução da ingestão</h3><span class="stat-sub">kcal</span></div>${dashboardLineChart(p.data,"kcal",DB.goals.kcal)}</div>
-    <div class="chart-card"><div class="chart-head"><h3>Média de macronutrientes</h3></div>
-      <div class="donut-row">
-        <svg width="125" height="125" viewBox="0 0 42 42" aria-label="Distribuição de macros">
-          <circle cx="21" cy="21" r="15.9" fill="none" stroke="var(--paper-2)" stroke-width="7"/>
-          <circle cx="21" cy="21" r="15.9" fill="none" stroke="var(--couve)" stroke-width="7" pathLength="100" stroke-dasharray="${shareP*100} ${100-shareP*100}" stroke-dashoffset="25"/>
-          <circle cx="21" cy="21" r="15.9" fill="none" stroke="var(--milho)" stroke-width="7" pathLength="100" stroke-dasharray="${shareC*100} ${100-shareC*100}" stroke-dashoffset="${25-shareP*100}"/>
-          <circle cx="21" cy="21" r="15.9" fill="none" stroke="var(--cafe)" stroke-width="7" pathLength="100" stroke-dasharray="${shareG*100} ${100-shareG*100}" stroke-dashoffset="${25-(shareP+shareC)*100}"/>
-        </svg>
-        <div class="donut-legend">
-          <div class="legend-item"><span>Proteína</span><b>${n1(p.avg.p)} g</b></div>
-          <div class="legend-item"><span>Carboidrato</span><b>${n1(p.avg.c)} g</b></div>
-          <div class="legend-item"><span>Gordura</span><b>${n1(p.avg.g)} g</b></div>
-        </div>
-      </div>
-    </div>
-    <div class="chart-card"><div class="chart-head"><h3>Alimentos que mais contribuíram para as kcal</h3></div>
-      ${top.length?top.map((x,i)=>`<div class="top-food"><span class="rank">${i+1}</span><span class="food-name">${esc(x.name)}</span><span class="food-kcal">${n0(x.kcal)} kcal</span></div>`).join(""):`<div class="chart-empty">Ainda não há dados no período.</div>`}
-    </div>`;
-  el.querySelectorAll(".period-tab").forEach(btn=>btn.addEventListener("click",()=>{dashboardPeriod=Number(btn.dataset.period);renderDashboard();}));
 }
 
 // ============================================================
@@ -833,6 +805,7 @@ function importBackup(ev){
       const parsed = JSON.parse(reader.result);
       if(!confirm("Isso vai substituir todos os dados atuais pelo conteúdo do backup. Deseja continuar?")) return;
       DB = Object.assign({ goals:{kcal:2709,p:187,c:321,g:75}, customFoods:[], log:{}, weight:[], theme:"light" }, parsed);
+      DB.customFoods = (DB.customFoods||[]).map(normalizeCustomFood).filter(Boolean);
       saveDB();
       applyTheme();
       renderCurrentTab();

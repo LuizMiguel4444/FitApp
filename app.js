@@ -56,6 +56,12 @@ function numVal(id, fallback){
 function allFoods(){ return FOODS.concat(DB.customFoods); }
 function findFood(id){ return allFoods().find(f => f.id === id); }
 
+function normalizeCustomFood(f){
+  if(!f || !f.name) return null;
+  return { id:String(f.id||("custom_"+uid())), name:String(f.name), cat:String(f.cat||"outro"), kcal:Number(f.kcal)||0, p:Number(f.p)||0, c:Number(f.c)||0, g:Number(f.g)||0 };
+}
+
+
 // ============ persistência ============
 function loadDB(){
   try{
@@ -64,7 +70,7 @@ function loadDB(){
       const parsed = JSON.parse(raw);
       DB = Object.assign({}, DB, parsed);
       DB.goals = Object.assign({ kcal:2709, p:187, c:321, g:75 }, parsed.goals||{});
-      DB.customFoods = parsed.customFoods || [];
+      DB.customFoods = (parsed.customFoods || []).map(normalizeCustomFood).filter(Boolean);
       DB.log = parsed.log || {};
       DB.weight = parsed.weight || [];
       DB.theme = parsed.theme || "light";
@@ -105,7 +111,9 @@ function closeModal(){
 function switchTab(tab){
   currentTab = tab;
   document.querySelectorAll(".tab").forEach(s => s.classList.add("hidden"));
-  document.getElementById("tab-"+tab).classList.remove("hidden");
+  const target = document.getElementById("tab-"+tab);
+  if(!target){ currentTab="hoje"; return switchTab("hoje"); }
+  target.classList.remove("hidden");
   document.querySelectorAll(".bottomnav button").forEach(b=>{
     b.classList.toggle("active", b.dataset.tab === tab);
   });
@@ -115,6 +123,7 @@ function switchTab(tab){
 function renderCurrentTab(){
   if(currentTab==="hoje") renderHoje();
   else if(currentTab==="adicionar") renderAdicionar();
+  else if(currentTab==="dashboard") renderDashboard();
   else if(currentTab==="historico") renderHistorico();
   else if(currentTab==="peso") renderPeso();
   else if(currentTab==="metas") renderMetas();
@@ -285,7 +294,7 @@ function renderAdicionar(){
           <div class="fmeta">${n0(f.kcal)} kcal · P ${n1(f.p)} · C ${n1(f.c)} · G ${n1(f.g)} <span style="opacity:.7;">/100g</span></div>
         </div>
         <div style="display:flex;align-items:center;gap:8px;">
-          ${isCustom ? `<button data-action="delcustom" style="background:none;border:none;color:var(--ink-soft);font-size:15px;">🗑</button>` : ``}
+          ${isCustom ? `<button data-action="editcustom" style="background:none;border:none;color:var(--ink-soft);font-size:15px;">✏️</button><button data-action="delcustom" style="background:none;border:none;color:var(--ink-soft);font-size:15px;">🗑</button>` : ``}
           <span class="fkcal">▾</span>
         </div>
       </div>
@@ -355,6 +364,13 @@ function renderAdicionar(){
       renderAdicionar();
     });
   });
+  el.querySelectorAll('[data-action="editcustom"]').forEach(btn=>{
+    btn.addEventListener("click", (ev)=>{
+      ev.stopPropagation();
+      const id = btn.closest(".food-card").dataset.food;
+      openCustomFoodModal(id);
+    });
+  });
   el.querySelectorAll('[data-action="delcustom"]').forEach(btn=>{
     btn.addEventListener("click", (ev)=>{
       ev.stopPropagation();
@@ -418,49 +434,315 @@ function addEntry(f, grams, meal){
   toast(`✓ ${f.name} adicionado em ${quando}`);
 }
 
-function openCustomFoodModal(){
+function openCustomFoodModal(editId=null){
+  const existing = editId ? DB.customFoods.find(f=>f.id===editId) : null;
   openModal(`
-    <h3>Novo alimento</h3>
-    <div class="field"><label>Nome</label><input type="text" id="cf-name" placeholder="Ex: Bolo de fubá caseiro"></div>
+    <h3>${existing ? "Editar alimento" : "Novo alimento"}</h3>
+    <div class="field"><label>Nome</label><input type="text" id="cf-name" value="${existing?esc(existing.name):""}" placeholder="Ex: Lasanha caseira"></div>
     <div class="field"><label>Categoria</label>
       <select id="cf-cat">
-        ${Object.keys(CATS).filter(k=>k!=="custom").map(k=>`<option value="${k}">${CATS[k].icon} ${CATS[k].label}</option>`).join("")}
+        ${Object.keys(CATS).filter(k=>k!=="custom").map(k=>`<option value="${k}" ${existing&&existing.cat===k?"selected":""}>${CATS[k].icon} ${CATS[k].label}</option>`).join("")}
       </select>
     </div>
-    <p class="desc" style="margin-top:6px;">Informe os valores para <b>100 g</b> do alimento.</p>
+    <p class="desc" style="margin-top:6px;">Informe os valores nutricionais para <b>100 g</b> do alimento.</p>
     <div class="grid2">
-      <div class="field"><label>Calorias (kcal)</label><input type="text" id="cf-kcal" inputmode="decimal"></div>
-      <div class="field"><label>Proteína (g)</label><input type="text" id="cf-p" inputmode="decimal"></div>
-      <div class="field"><label>Carboidrato (g)</label><input type="text" id="cf-c" inputmode="decimal"></div>
-      <div class="field"><label>Gordura (g)</label><input type="text" id="cf-g" inputmode="decimal"></div>
+      <div class="field"><label>Calorias (kcal)</label><input type="text" id="cf-kcal" inputmode="decimal" value="${existing?existing.kcal:""}"></div>
+      <div class="field"><label>Proteína (g)</label><input type="text" id="cf-p" inputmode="decimal" value="${existing?existing.p:""}"></div>
+      <div class="field"><label>Carboidrato (g)</label><input type="text" id="cf-c" inputmode="decimal" value="${existing?existing.c:""}"></div>
+      <div class="field"><label>Gordura (g)</label><input type="text" id="cf-g" inputmode="decimal" value="${existing?existing.g:""}"></div>
     </div>
-    <div class="field"><label>Fibra (g) — opcional</label><input type="text" id="cf-f" inputmode="decimal"></div>
     <div style="display:flex;gap:10px;margin-top:8px;">
       <button class="btn secondary" id="cf-cancel" style="width:auto;flex:1;">Cancelar</button>
-      <button class="btn" id="cf-save" style="flex:1;">Salvar alimento</button>
+      <button class="btn" id="cf-save" style="flex:1;">${existing?"Salvar alterações":"Salvar alimento"}</button>
     </div>
   `);
   document.getElementById("cf-cancel").addEventListener("click", closeModal);
-  document.getElementById("cf-save").addEventListener("click", saveCustomFood);
+  document.getElementById("cf-save").addEventListener("click", ()=>saveCustomFood(editId));
 }
 
-function saveCustomFood(){
+function saveCustomFood(editId=null){
   const name = document.getElementById("cf-name").value.trim();
   const cat = document.getElementById("cf-cat").value;
   const kcal = numVal("cf-kcal");
   const p = numVal("cf-p");
   const c = numVal("cf-c");
   const g = numVal("cf-g");
-  const f = numVal("cf-f");
   if(!name){ alert("Dê um nome para o alimento."); return; }
-  const dup = allFoods().some(x=>x.name.toLowerCase()===name.toLowerCase());
-  if(dup){ alert("Já existe um alimento com esse nome. Escolha outro nome, ou use/edite o existente em \"Meus alimentos\"."); return; }
-  DB.customFoods.push({ id:"custom_"+uid(), name, cat, kcal, p, c, g, f });
-  saveDB();
-  closeModal();
-  addCat = "custom"; addSearch="";
-  renderAdicionar();
-  toast("✓ Alimento cadastrado!");
+  if([kcal,p,c,g].some(v=>v<0)){ alert("Os valores nutricionais não podem ser negativos."); return; }
+  const dup = allFoods().some(x=>x.id!==editId && x.name.toLowerCase()===name.toLowerCase());
+  if(dup){ alert("Já existe um alimento com esse nome."); return; }
+  const item = normalizeCustomFood({id:editId||("custom_"+uid()),name,cat,kcal,p,c,g});
+  if(editId){
+    const i=DB.customFoods.findIndex(f=>f.id===editId);
+    if(i>=0) DB.customFoods[i]=item;
+  }else DB.customFoods.push(item);
+  saveDB(); closeModal(); addCat="custom"; addSearch=""; renderAdicionar(); toast(editId ? "✓ Alimento atualizado!" : "✓ Alimento cadastrado!");
+}
+
+// ============================================================
+// TAB: DASHBOARD
+// ============================================================
+let dashPeriod = 7;
+
+function dashboardEntries(){
+  const keys = Object.keys(DB.log || {}).sort();
+  return keys.flatMap(d => (DB.log[d]||[]).map(e => ({...e, date:d})));
+}
+function periodKeys(days){
+  const out=[]; const base=new Date(); base.setHours(0,0,0,0);
+  for(let i=days-1;i>=0;i--){ const d=new Date(base); d.setDate(base.getDate()-i); out.push(d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0")); }
+  return out;
+}
+function dashboardData(days){
+  const keys = periodKeys(days);
+
+  const daily = keys.map(date => ({
+    date,
+    ...dayTotals(date),
+    hasEntries: (DB.log[date] || []).length > 0
+  }));
+
+  // Considera somente dias que realmente possuem registros.
+  // Dias sem alimentação registrada não entram no denominador
+  // e, portanto, não alteram a média ao aumentar o período.
+  const activeDays = daily.filter(day => day.hasEntries);
+
+  const totals = activeDays.reduce(
+    (acc, day) => ({
+      kcal: acc.kcal + day.kcal,
+      p: acc.p + day.p,
+      c: acc.c + day.c,
+      g: acc.g + day.g
+    }),
+    { kcal: 0, p: 0, c: 0, g: 0 }
+  );
+
+  const count = activeDays.length;
+
+  const avg = count > 0
+    ? {
+        kcal: totals.kcal / count,
+        p: totals.p / count,
+        c: totals.c / count,
+        g: totals.g / count
+      }
+    : {
+        kcal: 0,
+        p: 0,
+        c: 0,
+        g: 0
+      };
+
+  // Ranking de alimentos: somente registros existentes
+  const top = {};
+
+  activeDays.forEach(day => {
+    (DB.log[day.date] || []).forEach(entry => {
+      top[entry.name] = (top[entry.name] || 0) + entry.kcal;
+    });
+  });
+
+  const leaders = Object.entries(top)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 6);
+
+  return {
+    keys,
+    daily,
+    totals,
+    avg,
+    active: count,
+    activeDays: count,
+    leaders
+  };
+}
+function svgLine(values, labels, colorVar="var(--chart-line)"){
+  if (!values.length) return "";
+
+  const W = 680;
+  const H = 260;
+
+  const left = 56;
+  const right = 18;
+  const top = 18;
+  const bottom = 42;
+
+  const chartW = W - left - right;
+  const chartH = H - top - bottom;
+
+  const rawMin = Math.min(...values);
+  const rawMax = Math.max(...values);
+
+  // Evita gráfico "achatado" quando todos os valores são iguais.
+  const padding = rawMax === rawMin
+    ? Math.max(rawMax * 0.10, 10)
+    : (rawMax - rawMin) * 0.10;
+
+  const min = Math.max(0, rawMin - padding);
+  const max = rawMax + padding;
+  const range = max - min || 1;
+
+  const xStep = values.length > 1
+    ? chartW / (values.length - 1)
+    : 0;
+
+  const points = values.map((value, index) => {
+    const x = left + index * xStep;
+    const y = top + chartH - ((value - min) / range) * chartH;
+    return { x, y, value };
+  });
+
+  // 5 divisões no eixo Y
+  const yTicks = 5;
+
+  const grid = Array.from({ length: yTicks + 1 }, (_, i) => {
+    const ratio = i / yTicks;
+    const y = top + ratio * chartH;
+    const value = max - ratio * range;
+
+    return `
+      <line
+        x1="${left}"
+        y1="${y.toFixed(1)}"
+        x2="${W - right}"
+        y2="${y.toFixed(1)}"
+        stroke="var(--line)"
+        stroke-width="1"
+      />
+      <text
+        x="${left - 8}"
+        y="${(y + 4).toFixed(1)}"
+        text-anchor="end"
+        font-size="11"
+        fill="var(--ink-soft)"
+      >${n0(value)}</text>
+    `;
+  }).join("");
+
+  // Eixo X: no máximo 7 rótulos
+  const maxXLabels = 7;
+  const xEvery = values.length <= maxXLabels
+    ? 1
+    : Math.ceil((values.length - 1) / (maxXLabels - 1));
+
+  const xLabels = labels.map((label, index) => {
+    const isLast = index === labels.length - 1;
+
+    if (index !== 0 && !isLast && index % xEvery !== 0) {
+      return "";
+    }
+
+    const p = points[index];
+
+    return `
+      <text
+        x="${p.x.toFixed(1)}"
+        y="${H - 12}"
+        text-anchor="middle"
+        font-size="10"
+        fill="var(--ink-soft)"
+      >${label}</text>
+    `;
+  }).join("");
+
+  const path = points.map((p, index) =>
+    `${index === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`
+  ).join(" ");
+
+  const dots = points.map(p => `
+    <circle
+      cx="${p.x.toFixed(1)}"
+      cy="${p.y.toFixed(1)}"
+      r="3.5"
+      fill="var(--chart-point)"
+    />
+  `).join("");
+
+  return `
+    <svg
+      viewBox="0 0 ${W} ${H}"
+      style="width:100%;height:auto;display:block;"
+      preserveAspectRatio="none"
+    >
+      ${grid}
+
+      <line
+        x1="${left}"
+        y1="${top + chartH}"
+        x2="${W - right}"
+        y2="${top + chartH}"
+        stroke="var(--ink-soft)"
+        stroke-width="1"
+      />
+
+      <line
+        x1="${left}"
+        y1="${top}"
+        x2="${left}"
+        y2="${top + chartH}"
+        stroke="var(--ink-soft)"
+        stroke-width="1"
+      />
+
+      <path
+        d="${path}"
+        fill="none"
+        stroke="${colorVar}"
+        stroke-width="3"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      />
+
+      ${dots}
+      ${xLabels}
+    </svg>
+  `;
+}
+function renderDashboard(){
+  const el=document.getElementById("tab-dashboard");
+  const d=dashboardData(dashPeriod), g=DB.goals||{};
+  const currentWeight=(DB.weight||[]).slice().sort((a,b)=>a.date.localeCompare(b.date)).at(-1);
+  const adherence=d.daily.filter(x=>x.kcal>0 && g.kcal>0 && x.kcal<=g.kcal*1.05).length;
+  const kcalMax=Math.max(g.kcal||1,...d.daily.map(x=>x.kcal),1);
+  const macroTotal=d.avg.p+d.avg.c+d.avg.g;
+  el.innerHTML=`
+    <div class="section-title">Dashboard</div>
+    <div class="period-tabs">
+      ${[7,14,30,90].map(p=>`<button class="period-tab ${p===dashPeriod?"active":""}" data-period="${p}">${p} dias</button>`).join("")}
+    </div>
+    <div class="dashboard-grid" style="margin-top:12px;">
+      <div class="kpi-card"><div class="kpi-label">Média kcal</div><div class="kpi-value">${n0(d.avg.kcal)}</div><div class="kpi-sub">meta ${n0(g.kcal||0)} kcal</div></div>
+      <div class="kpi-card"><div class="kpi-label">Proteína</div><div class="kpi-value">${n0(d.avg.p)} g</div><div class="kpi-sub">meta ${n0(g.p||0)} g</div></div>
+      <div class="kpi-card"><div class="kpi-label">Peso</div><div class="kpi-value">${currentWeight?n1(currentWeight.kg)+" kg":"—"}</div><div class="kpi-sub">último registro</div></div>
+      <div class="kpi-card"><div class="kpi-label">Aderência</div><div class="kpi-value">${adherence}/${d.active}</div><div class="kpi-sub">dias dentro da meta</div></div>
+    </div>
+    <div class="chart-card">
+      <h3>Calorias por dia</h3>
+      ${
+        d.active
+          ? (() => {
+              const chartDays = d.daily.filter(x => x.hasEntries);
+
+              return svgLine(
+                chartDays.map(x => x.kcal),
+                chartDays.map(x => {
+                  const [year, month, day] = x.date.split("-");
+                  return `${day}/${month}`;
+                })
+              );
+            })()
+          : `<div class="empty-hint">Ainda não há registros suficientes para este período. Adicione alimentos na aba Adicionar.</div>`
+      }
+    </div>
+    <div class="chart-card"><h3>Macronutrientes médios</h3>
+      ${macroTotal>0?`<div class="bar-row"><span>Proteína</span><div class="bar-track"><div class="bar-fill" style="width:${Math.min(100,(d.avg.p/(g.p||d.avg.p||1))*100)}%"></div></div><b>${n1(d.avg.p)} g</b></div>
+      <div class="bar-row"><span>Carboidrato</span><div class="bar-track"><div class="bar-fill" style="width:${Math.min(100,(d.avg.c/(g.c||d.avg.c||1))*100)}%"></div></div><b>${n1(d.avg.c)} g</b></div>
+      <div class="bar-row"><span>Gordura</span><div class="bar-track"><div class="bar-fill" style="width:${Math.min(100,(d.avg.g/(g.g||d.avg.g||1))*100)}%"></div></div><b>${n1(d.avg.g)} g</b></div>`:`<div class="empty-hint">Sem dados de macronutrientes no período.</div>`}
+    </div>
+    <div class="chart-card"><h3>Alimentos que mais contribuíram para as calorias</h3>
+      ${d.leaders.length?d.leaders.map((x,i)=>`<div class="bar-row"><span>${i+1}. ${esc(x[0])}</span><div class="bar-track"><div class="bar-fill" style="width:${Math.max(4,Math.min(100,(x[1]/Math.max(d.leaders[0][1],1))*100))}%"></div></div><b>${n0(x[1])} kcal</b></div>`).join(""):`<div class="empty-hint">Ainda não há alimentos registrados.</div>`}
+    </div>`;
+  el.querySelectorAll('.period-tab').forEach(btn=>btn.addEventListener('click',()=>{dashPeriod=Number(btn.dataset.period);renderDashboard();}));
 }
 
 // ============================================================
@@ -559,23 +841,172 @@ function renderPeso(){
 }
 
 function weightSVG(data){
-  const W=300,H=90,pad=10;
-  const weights = data.map(d=>d.kg);
-  const min = Math.min(...weights), max = Math.max(...weights);
-  const range = (max-min)||1;
-  const stepX = data.length>1 ? (W-2*pad)/(data.length-1) : 0;
-  const pts = data.map((d,i)=>{
-    const x = pad + i*stepX;
-    const y = H-pad - ((d.kg-min)/range)*(H-2*pad);
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
-  }).join(" ");
-  const first = data[0], last = data[data.length-1];
-  const diff = last.kg-first.kg;
-  const diffTxt = (diff>=0?"+":"")+n1(diff)+" kg no período";
-  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;">
-    <polyline points="${pts}" fill="none" stroke="var(--urucum)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-  </svg>
-  <div style="font-size:12px;color:var(--ink-soft);text-align:center;margin-top:4px;">${diffTxt} · ${n1(min)}–${n1(max)} kg</div>`;
+  if (!data || data.length < 2) return "";
+
+  const W = 680;
+  const H = 260;
+
+  const left = 56;
+  const right = 18;
+  const top = 18;
+  const bottom = 42;
+
+  const chartW = W - left - right;
+  const chartH = H - top - bottom;
+
+  const weights = data.map(d => d.kg);
+
+  const rawMin = Math.min(...weights);
+  const rawMax = Math.max(...weights);
+
+  const padding = rawMax === rawMin
+    ? Math.max(rawMax * 0.02, 0.5)
+    : (rawMax - rawMin) * 0.10;
+
+  const min = Math.max(0, rawMin - padding);
+  const max = rawMax + padding;
+  const range = max - min || 1;
+
+  const xStep = chartW / (data.length - 1);
+
+  const points = data.map((item, index) => {
+    const x = left + index * xStep;
+    const y = top + chartH - ((item.kg - min) / range) * chartH;
+
+    return {
+      x,
+      y,
+      kg: item.kg
+    };
+  });
+
+  const yTicks = 5;
+
+  const grid = Array.from({ length: yTicks + 1 }, (_, i) => {
+    const ratio = i / yTicks;
+    const y = top + ratio * chartH;
+    const value = max - ratio * range;
+
+    return `
+      <line
+        x1="${left}"
+        y1="${y.toFixed(1)}"
+        x2="${W - right}"
+        y2="${y.toFixed(1)}"
+        stroke="var(--line)"
+        stroke-width="1"
+      />
+
+      <text
+        x="${left - 8}"
+        y="${(y + 4).toFixed(1)}"
+        text-anchor="end"
+        font-size="11"
+        fill="var(--ink-soft)"
+      >${n1(value)}</text>
+    `;
+  }).join("");
+
+  const maxXLabels = 7;
+
+  const xEvery = data.length <= maxXLabels
+    ? 1
+    : Math.ceil((data.length - 1) / (maxXLabels - 1));
+
+  const xLabels = data.map((item, index) => {
+    const isLast = index === data.length - 1;
+
+    if (index !== 0 && !isLast && index % xEvery !== 0) {
+      return "";
+    }
+
+    const [year, month, day] = item.date.split("-");
+    const label = `${day}/${month}`;
+
+    const p = points[index];
+
+    return `
+      <text
+        x="${p.x.toFixed(1)}"
+        y="${H - 12}"
+        text-anchor="middle"
+        font-size="10"
+        fill="var(--ink-soft)"
+      >${label}</text>
+    `;
+  }).join("");
+
+  const path = points.map((p, index) =>
+    `${index === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`
+  ).join(" ");
+
+  const dots = points.map(p => `
+    <circle
+      cx="${p.x.toFixed(1)}"
+      cy="${p.y.toFixed(1)}"
+      r="3.5"
+      fill="var(--chart-point)"
+    />
+  `).join("");
+
+  const first = data[0];
+  const last = data[data.length - 1];
+
+  const diff = last.kg - first.kg;
+
+  const diffTxt =
+    `${diff >= 0 ? "+" : ""}${n1(diff)} kg no período`;
+
+  return `
+    <svg
+      viewBox="0 0 ${W} ${H}"
+      style="width:100%;height:auto;display:block;"
+      preserveAspectRatio="none"
+    >
+      ${grid}
+
+      <line
+        x1="${left}"
+        y1="${top + chartH}"
+        x2="${W - right}"
+        y2="${top + chartH}"
+        stroke="var(--ink-soft)"
+        stroke-width="1"
+      />
+
+      <line
+        x1="${left}"
+        y1="${top}"
+        x2="${left}"
+        y2="${top + chartH}"
+        stroke="var(--ink-soft)"
+        stroke-width="1"
+      />
+
+      <path
+        d="${path}"
+        fill="none"
+        stroke="var(--chart-line)"
+        stroke-width="3"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      />
+
+      ${dots}
+      ${xLabels}
+    </svg>
+
+    <div
+      style="
+        font-size:12px;
+        color:var(--ink-soft);
+        text-align:center;
+        margin-top:6px;
+      "
+    >
+      ${diffTxt} · ${n1(rawMin)}–${n1(rawMax)} kg
+    </div>
+  `;
 }
 
 // ============================================================
@@ -723,6 +1154,7 @@ function importBackup(ev){
       const parsed = JSON.parse(reader.result);
       if(!confirm("Isso vai substituir todos os dados atuais pelo conteúdo do backup. Deseja continuar?")) return;
       DB = Object.assign({ goals:{kcal:2709,p:187,c:321,g:75}, customFoods:[], log:{}, weight:[], theme:"light" }, parsed);
+      DB.customFoods = (DB.customFoods||[]).map(normalizeCustomFood).filter(Boolean);
       saveDB();
       applyTheme();
       renderCurrentTab();

@@ -3,7 +3,7 @@
 // Ao abrir o index.html direto do celular (file://), o navegador ignora isso
 // automaticamente — o app funciona normalmente do mesmo jeito, via localStorage.
 
-const CACHE = "prato-do-dia-v1";
+const CACHE = "prato-do-dia-v4";
 const ASSETS = [
   "./",
   "./index.html",

@@ -10,6 +10,10 @@ let DB = {
   customFoods: [],
   log: {},     // { "2026-08-10": [ {id, foodId, name, cat, grams, per100:{kcal,p,c,g}, kcal,p,c,g, meal} ] }
   weight: [],  // [ {id, date, kg} ]
+  habits: [],     // [ {id, name, type:'check'|'numeric', target?, unit?, step?} ]
+  habitLog: {},   // { "2026-08-10": [ {id, name, type, value?} ] } — value só existe pra hábitos numéricos
+  foodUsage: {},  // { foodId: contagem de vezes adicionado } — base dos "mais usados"
+  streakGoals: [], // [ "kcal"|"protein"|"carbs"|"fat"|"habit_<id>", ... ] — metas escolhidas p/ sequência
   theme: "light"
 };
 
@@ -55,6 +59,7 @@ function numVal(id, fallback){
 
 function allFoods(){ return FOODS.concat(DB.customFoods); }
 function findFood(id){ return allFoods().find(f => f.id === id); }
+function defaultAddCat(){ return Object.keys(DB.foodUsage||{}).length>0 ? "favoritos" : "proteina"; }
 
 function normalizeCustomFood(f){
   if(!f || !f.name) return null;
@@ -73,7 +78,24 @@ function loadDB(){
       DB.customFoods = (parsed.customFoods || []).map(normalizeCustomFood).filter(Boolean);
       DB.log = parsed.log || {};
       DB.weight = parsed.weight || [];
+      // "habits" é novo: se não existir no save (usuário antigo) OU for a primeira vez
+      // (save sem essa chave), semeia dois exemplos de partida — só nesse caso,
+      // nunca sobrescrevendo hábitos que o usuário já tenha criado/apagado.
+      // .map normaliza hábitos salvos antes do tipo numérico existir (sem "type" -> "check").
+      DB.habits = (parsed.habits!==undefined ? parsed.habits : [
+        { id:"habit_"+uid(), name:"Tomar creatina", type:"check" },
+        { id:"habit_"+uid(), name:"Fazer vacuum", type:"check" }
+      ]).map(h=>({ ...h, type: h.type||"check" }));
+      DB.habitLog = parsed.habitLog || {};
+      DB.foodUsage = parsed.foodUsage || {};
+      DB.streakGoals = parsed.streakGoals || [];
       DB.theme = parsed.theme || "light";
+    }else{
+      // instalação nova (sem nada salvo ainda): também semeia os exemplos
+      DB.habits = [
+        { id:"habit_"+uid(), name:"Tomar creatina", type:"check" },
+        { id:"habit_"+uid(), name:"Fazer vacuum", type:"check" }
+      ];
     }
   }catch(e){ console.warn("Não foi possível carregar dados salvos:", e); }
 }
@@ -150,6 +172,238 @@ function dayTotals(dateKey){
   return t;
 }
 
+// ============ hábitos / metas pessoais ============
+// Combina os hábitos ativos (DB.habits) com quaisquer marcações daquele dia
+// específico cujo hábito já tenha sido excluído (fica como "legado", só leitura
+// de nome — mas ainda pode ser desmarcado), para o histórico nunca perder dado.
+function habitsForDay(dateKey){
+  const checked = DB.habitLog[dateKey] || [];
+  const checkedMap = new Map(checked.map(c=>[c.id, c]));
+  const active = DB.habits.map(h=>{
+    if(h.type==="numeric"){
+      const entry = checkedMap.get(h.id);
+      const value = entry ? (entry.value||0) : 0;
+      const target = h.target||0;
+      return { id:h.id, name:h.name, type:"numeric", target, unit:h.unit||"un.", step:h.step||1, value, done: target>0 && value>=target, legacy:false };
+    }
+    return { id:h.id, name:h.name, type:"check", done: checkedMap.has(h.id), legacy:false };
+  });
+  const legacy = checked
+    .filter(c=>!DB.habits.some(h=>h.id===c.id))
+    .map(c=>{
+      if(c.type==="numeric"){
+        const target = c.target||0;
+        return { id:c.id, name:c.name, type:"numeric", target, unit:c.unit||"un.", step: c.step||Math.max(1,Math.round(target/10))||1, value:c.value||0, done: target>0 && (c.value||0)>=target, legacy:true };
+      }
+      return { id:c.id, name:c.name, type:"check", done:true, legacy:true };
+    });
+  return active.concat(legacy);
+}
+function toggleHabit(dateKey, habitId, habitName){
+  if(!DB.habitLog[dateKey]) DB.habitLog[dateKey] = [];
+  const idx = DB.habitLog[dateKey].findIndex(c=>c.id===habitId);
+  if(idx>=0){ DB.habitLog[dateKey].splice(idx,1); }
+  else{ DB.habitLog[dateKey].push({ id:habitId, name:habitName, type:"check" }); }
+  if(DB.habitLog[dateKey].length===0) delete DB.habitLog[dateKey];
+  saveDB();
+}
+function setHabitValue(dateKey, habit, newValue){
+  const value = Math.max(0, Math.round(newValue*10)/10);
+  if(!DB.habitLog[dateKey]) DB.habitLog[dateKey] = [];
+  const entry = DB.habitLog[dateKey].find(c=>c.id===habit.id);
+  if(value<=0){
+    DB.habitLog[dateKey] = DB.habitLog[dateKey].filter(c=>c.id!==habit.id);
+  }else if(entry){
+    entry.value = value; entry.name = habit.name; entry.type = "numeric"; entry.target = habit.target; entry.unit = habit.unit; entry.step = habit.step;
+  }else{
+    DB.habitLog[dateKey].push({ id:habit.id, name:habit.name, type:"numeric", value, target:habit.target, unit:habit.unit, step:habit.step });
+  }
+  if(DB.habitLog[dateKey].length===0) delete DB.habitLog[dateKey];
+  saveDB();
+}
+function addHabit(name, type, opts){
+  const clean = String(name||"").trim();
+  if(!clean) return { ok:false, msg:"Dê um nome para a meta pessoal." };
+  const dup = DB.habits.some(h=>h.name.toLowerCase()===clean.toLowerCase());
+  if(dup) return { ok:false, msg:"Você já tem uma meta pessoal com esse nome." };
+  const habit = { id:"habit_"+uid(), name:clean, type: type==="numeric" ? "numeric" : "check" };
+  if(habit.type==="numeric"){
+    const target = Number(opts && opts.target);
+    if(!target || target<=0) return { ok:false, msg:"Informe uma meta numérica válida (maior que zero)." };
+    habit.target = target;
+    habit.unit = String((opts&&opts.unit)||"").trim() || "un.";
+    habit.step = (opts&&Number(opts.step)>0) ? Number(opts.step) : Math.max(1, Math.round(target/10));
+  }
+  DB.habits.push(habit);
+  saveDB();
+  return { ok:true };
+}
+function updateHabit(habitId, updates){
+  const h = DB.habits.find(x=>x.id===habitId);
+  if(!h) return { ok:false, msg:"Meta pessoal não encontrada." };
+  const clean = String(updates.name||"").trim();
+  if(!clean) return { ok:false, msg:"Dê um nome para a meta pessoal." };
+  const dup = DB.habits.some(x=>x.id!==habitId && x.name.toLowerCase()===clean.toLowerCase());
+  if(dup) return { ok:false, msg:"Você já tem uma meta pessoal com esse nome." };
+  h.name = clean;
+  if(h.type==="numeric"){
+    const target = Number(updates.target);
+    if(!target || target<=0) return { ok:false, msg:"Informe uma meta numérica válida (maior que zero)." };
+    h.target = target;
+    h.unit = String(updates.unit||"").trim() || "un.";
+    h.step = Number(updates.step)>0 ? Number(updates.step) : Math.max(1, Math.round(target/10));
+  }
+  saveDB();
+  return { ok:true };
+}
+function deleteHabit(habitId){
+  DB.habits = DB.habits.filter(h=>h.id!==habitId);
+  DB.streakGoals = DB.streakGoals.filter(k=>k!==habitId);
+  saveDB();
+}
+
+// ============ sequências (streaks) ============
+function streakGoalOptions(){
+  const opts = [
+    { key:"kcal", label:"Calorias" },
+    { key:"protein", label:"Proteína" },
+    { key:"carbs", label:"Carboidrato" },
+    { key:"fat", label:"Gordura" }
+  ];
+  DB.habits.forEach(h=> opts.push({ key:h.id, label:h.name }));
+  return opts;
+}
+function streakLabel(goalKey){
+  const found = streakGoalOptions().find(o=>o.key===goalKey);
+  return found ? found.label : goalKey;
+}
+function isGoalMetOnDate(goalKey, dateKey){
+  const nutriField = { kcal:"kcal", protein:"p", carbs:"c", fat:"g" }[goalKey];
+  if(nutriField){
+    const goalVal = DB.goals[nutriField];
+    if(!goalVal || goalVal<=0) return false;
+    return dayTotals(dateKey)[nutriField] >= goalVal;
+  }
+  if(goalKey.startsWith("habit_")){
+    const entry = habitsForDay(dateKey).find(h=>h.id===goalKey);
+    return entry ? entry.done : false;
+  }
+  return false;
+}
+function computeStreak(goalKey){
+  const keyOf = (dt)=> dt.getFullYear()+"-"+String(dt.getMonth()+1).padStart(2,"0")+"-"+String(dt.getDate()).padStart(2,"0");
+  const d = new Date(); d.setHours(0,0,0,0);
+  // se hoje ainda não foi cumprido, a sequência não quebra por isso — só ainda
+  // não conta hoje, e a contagem passa a olhar a partir de ontem.
+  if(!isGoalMetOnDate(goalKey, keyOf(d))) d.setDate(d.getDate()-1);
+  let streak = 0;
+  while(isGoalMetOnDate(goalKey, keyOf(d))){
+    streak++;
+    d.setDate(d.getDate()-1);
+  }
+  return streak;
+}
+
+// ============ repetir refeição ============
+function findPreviousMealEntries(beforeDate, mealKey){
+  const dates = Object.keys(DB.log).filter(d=>d<beforeDate).sort().reverse();
+  for(const d of dates){
+    const entries = (DB.log[d]||[]).filter(e=>e.meal===mealKey);
+    if(entries.length>0) return { date:d, entries };
+  }
+  return null;
+}
+function repeatMeal(dateKey, mealKey){
+  const found = findPreviousMealEntries(dateKey, mealKey);
+  if(!found){ toast("Nenhum registro anterior encontrado para essa refeição."); return; }
+  if(!DB.log[dateKey]) DB.log[dateKey] = [];
+  found.entries.forEach(e=>{
+    DB.log[dateKey].push({
+      id: uid(), foodId: e.foodId, name: e.name, cat: e.cat, grams: e.grams,
+      per100: { ...e.per100 }, kcal: e.kcal, p: e.p, c: e.c, g: e.g, meal: mealKey
+    });
+    if(e.foodId) DB.foodUsage[e.foodId] = (DB.foodUsage[e.foodId]||0) + 1;
+  });
+  saveDB();
+  renderCurrentTab();
+  toast(`✓ ${found.entries.length} ${found.entries.length===1?"item repetido":"itens repetidos"} de ${fmtDateShort(found.date)}`);
+}
+
+function renderHabitManageList(){
+  if(DB.habits.length===0) return `<div class="empty-hint" style="padding:10px 0;">Nenhuma meta pessoal cadastrada ainda.</div>`;
+  return DB.habits.map(h=>`<div class="habit-manage-row">
+    <span>${esc(h.name)}${h.type==="numeric"?` <span style="opacity:.6;font-size:12px;">(meta: ${n0(h.target)} ${esc(h.unit)})</span>`:``}</span>
+    <span style="display:flex;gap:4px;">
+      <button data-edit-habit="${h.id}" title="Editar">✏️</button>
+      <button data-del-habit="${h.id}" title="Excluir">🗑</button>
+    </span>
+  </div>`).join("");
+}
+function openHabitModal(editId=null){
+  const existing = editId ? DB.habits.find(h=>h.id===editId) : null;
+  openModal(`
+    <h3>${existing?"Editar":"Nova"} meta pessoal</h3>
+    <div class="field"><label>Nome</label><input type="text" id="hm-name" value="${existing?esc(existing.name):""}" placeholder="Ex: Tomar creatina"></div>
+    <div class="field"><label>Tipo</label>
+      <select id="hm-type" ${existing?"disabled":""}>
+        <option value="check" ${(!existing||existing.type==="check")?"selected":""}>Sim/não (marcar quando cumprir)</option>
+        <option value="numeric" ${(existing&&existing.type==="numeric")?"selected":""}>Numérica (com meta e progresso)</option>
+      </select>
+    </div>
+    <div id="hm-numeric-fields" style="${(existing&&existing.type==="numeric")?"":"display:none;"}">
+      <div class="grid2">
+        <div class="field"><label>Meta</label><input type="text" inputmode="decimal" id="hm-target" value="${existing&&existing.target?existing.target:""}" placeholder="Ex: 3000"></div>
+        <div class="field"><label>Unidade</label><input type="text" id="hm-unit" value="${existing?esc(existing.unit||""):""}" placeholder="Ex: ml, copos, passos"></div>
+      </div>
+      <div class="field"><label>Incremento por toque (opcional)</label><input type="text" inputmode="decimal" id="hm-step" value="${existing&&existing.step?existing.step:""}" placeholder="Ex: 250"></div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:8px;">
+      <button class="btn secondary" id="hm-cancel" style="width:auto;flex:1;">Cancelar</button>
+      <button class="btn" id="hm-save" style="flex:1;">Salvar</button>
+    </div>
+  `);
+  document.getElementById("hm-cancel").addEventListener("click", closeModal);
+  document.getElementById("hm-type").addEventListener("change", (e)=>{
+    document.getElementById("hm-numeric-fields").style.display = e.target.value==="numeric" ? "" : "none";
+  });
+  document.getElementById("hm-save").addEventListener("click", ()=>{
+    const name = document.getElementById("hm-name").value;
+    const type = document.getElementById("hm-type").value;
+    const opts = { target: numVal("hm-target"), unit: document.getElementById("hm-unit").value, step: numVal("hm-step") };
+    const res = existing ? updateHabit(existing.id, { name, ...opts }) : addHabit(name, type, opts);
+    if(!res.ok){ alert(res.msg); return; }
+    closeModal();
+    document.getElementById("habit-manage-list").innerHTML = renderHabitManageList();
+    toast(existing ? "✓ Meta pessoal atualizada!" : "✓ Meta pessoal adicionada!");
+  });
+}
+function wireHabitManageActions(){
+  document.getElementById("add-habit-btn").addEventListener("click", ()=> openHabitModal());
+  // delegação: um único listener no container cobre editar/excluir, mesmo
+  // depois do innerHTML da lista ser trocado.
+  document.getElementById("habit-manage-list").addEventListener("click", (ev)=>{
+    const editBtn = ev.target.closest("[data-edit-habit]");
+    if(editBtn){ openHabitModal(editBtn.dataset.editHabit); return; }
+    const delBtn = ev.target.closest("[data-del-habit]");
+    if(delBtn){
+      if(confirm("Excluir esta meta pessoal? Os dias já marcados no histórico continuam registrados.")){
+        deleteHabit(delBtn.dataset.delHabit);
+        document.getElementById("habit-manage-list").innerHTML = renderHabitManageList();
+        toast("Meta pessoal removida.");
+      }
+    }
+  });
+  document.querySelectorAll("[data-streak-key]").forEach(cb=>{
+    cb.addEventListener("change", ()=>{
+      const key = cb.dataset.streakKey;
+      if(cb.checked){ if(!DB.streakGoals.includes(key)) DB.streakGoals.push(key); }
+      else{ DB.streakGoals = DB.streakGoals.filter(k=>k!==key); }
+      saveDB();
+      toast(cb.checked ? "🔥 Sequência ativada" : "Sequência desativada");
+    });
+  });
+}
+
 function renderDayCard(dateKey, editable){
   const entries = DB.log[dateKey] || [];
   const totals = dayTotals(dateKey);
@@ -169,14 +423,51 @@ function renderDayCard(dateKey, editable){
     </div>
   </div>`;
 
+  if(dateKey===todayKey() && DB.streakGoals.length>0){
+    html += `<div class="streak-strip">${DB.streakGoals.map(goalKey=>{
+      const n = computeStreak(goalKey);
+      return `<div class="streak-badge"><span class="sb-fire">🔥</span><b>${n}</b><span class="sb-label">${esc(streakLabel(goalKey))}</span></div>`;
+    }).join("")}</div>`;
+  }
+
+  const habits = habitsForDay(dateKey);
+  const checkHabits = habits.filter(h=>h.type==="check");
+  const numHabits = habits.filter(h=>h.type==="numeric");
+  if(habits.length>0){
+    html += `<div class="habit-card">
+      <h3>✅ Metas pessoais</h3>
+      ${checkHabits.length>0 ? `<div class="habit-pills">
+        ${checkHabits.map(h=>`<button class="habit-pill ${h.done?"done":""}" data-habit-toggle="${h.id}" data-habit-name="${esc(h.name)}" ${!editable?"disabled":""}>
+          <span class="hp-check">${h.done?"✓":""}</span>${esc(h.name)}${h.legacy?` <span style="opacity:.6;">(removida)</span>`:``}
+        </button>`).join("")}
+      </div>` : ``}
+      ${numHabits.map(h=>{
+        const pct = h.target>0 ? Math.min(100,(h.value/h.target)*100) : 0;
+        return `<div class="habit-numeric ${h.done?"done":""}">
+          <div class="hn-top">
+            <span class="hn-name">${esc(h.name)}${h.legacy?` <span style="opacity:.6;">(removida)</span>`:``}</span>
+            <span class="hn-val" ${editable?`data-habit-editval="${h.id}"`:""}>${n1(h.value)} / ${n0(h.target)} ${esc(h.unit)}</span>
+          </div>
+          <div class="hn-track"><div class="hn-fill" style="width:${pct}%"></div></div>
+          ${editable ? `<div class="hn-controls">
+            <button data-habit-adjust="${h.id}" data-habit-delta="-1">− ${n1(h.step)} ${esc(h.unit)}</button>
+            <button data-habit-adjust="${h.id}" data-habit-delta="1">+ ${n1(h.step)} ${esc(h.unit)}</button>
+          </div>` : ``}
+        </div>`;
+      }).join("")}
+    </div>`;
+  }
+
   Object.keys(MEALS).forEach(mealKey=>{
     const mealEntries = entries.filter(e=>e.meal===mealKey);
     const mealKcal = mealEntries.reduce((s,e)=>s+e.kcal,0);
+    const prevMeal = editable ? findPreviousMealEntries(dateKey, mealKey) : null;
     html += `<div class="meal-card">
       <div class="meal-head">
         <h3>${MEALS[mealKey]}</h3>
         <div style="display:flex;align-items:center;gap:8px;">
           <span class="mkcal">${n0(mealKcal)} kcal</span>
+          ${prevMeal ? `<button class="meal-repeat" data-repeat-meal="${mealKey}" title="Repetir de ${fmtDateShort(prevMeal.date)}">🔁</button>` : ``}
           ${editable ? `<button class="meal-add" data-meal="${mealKey}">+ adicionar</button>` : ``}
         </div>
       </div>`;
@@ -237,6 +528,43 @@ function wireEntryActions(container, dateKey){
       }
     });
   });
+  wireHabitActions(container, dateKey);
+}
+
+function wireHabitActions(container, dateKey){
+  container.querySelectorAll("[data-habit-toggle]").forEach(btn=>{
+    btn.addEventListener("click", ()=>{
+      toggleHabit(dateKey, btn.dataset.habitToggle, btn.dataset.habitName);
+      renderCurrentTab();
+    });
+  });
+  container.querySelectorAll("[data-habit-adjust]").forEach(btn=>{
+    btn.addEventListener("click", ()=>{
+      const h = habitsForDay(dateKey).find(x=>x.id===btn.dataset.habitAdjust);
+      if(!h) return;
+      const sign = btn.dataset.habitDelta==="-1" ? -1 : 1;
+      setHabitValue(dateKey, h, h.value + sign*h.step);
+      renderCurrentTab();
+    });
+  });
+  container.querySelectorAll("[data-habit-editval]").forEach(el=>{
+    el.addEventListener("click", ()=>{
+      const h = habitsForDay(dateKey).find(x=>x.id===el.dataset.habitEditval);
+      if(!h) return;
+      const val = prompt(`Novo valor de "${h.name}" (${h.unit}):`, h.value);
+      if(val===null) return;
+      const num = parseFloat(String(val).replace(",","."));
+      if(isNaN(num) || num<0){ alert("Informe um número válido."); return; }
+      setHabitValue(dateKey, h, num);
+      renderCurrentTab();
+    });
+  });
+  container.querySelectorAll("[data-repeat-meal]").forEach(btn=>{
+    btn.addEventListener("click", (ev)=>{
+      ev.stopPropagation();
+      repeatMeal(dateKey, btn.dataset.repeatMeal);
+    });
+  });
 }
 
 function editEntry(dateKey, entryId){
@@ -274,6 +602,12 @@ function renderAdicionar(){
   }else if(addCat==="custom"){
     // "Meus alimentos" agrega todos os personalizados, independente da categoria real deles
     listSource = DB.customFoods;
+  }else if(addCat==="favoritos"){
+    listSource = Object.entries(DB.foodUsage||{})
+      .sort((a,b)=>b[1]-a[1])
+      .map(([id])=>findFood(id))
+      .filter(Boolean)
+      .slice(0,15);
   }else{
     listSource = allFoods().filter(f=>f.cat===addCat);
   }
@@ -283,14 +617,17 @@ function renderAdicionar(){
     listHtml += `<div class="custom-add-card" id="btn-new-custom">＋ Adicionar novo alimento</div>`;
   }
   if(listSource.length===0){
-    listHtml += `<div class="empty-hint">Nenhum alimento encontrado. ${addCat==="custom"?"Toque acima para cadastrar o seu.":"Tente buscar outro termo."}</div>`;
+    let hint = "Tente buscar outro termo.";
+    if(addCat==="custom") hint = "Toque acima para cadastrar o seu.";
+    if(addCat==="favoritos") hint = "Os alimentos que você mais adicionar vão aparecer aqui.";
+    listHtml += `<div class="empty-hint">Nenhum alimento encontrado. ${hint}</div>`;
   }
   listSource.forEach(f=>{
     const isCustom = f.id.startsWith("custom_");
     listHtml += `<div class="food-card" data-food="${f.id}">
       <div class="food-row" data-action="toggle">
         <div>
-          <div class="fname">${esc(f.name)} ${(addSearch||addCat==="custom") ? `<span style="font-size:11px;color:var(--ink-soft);">${CATS[f.cat].icon}</span>`:""}</div>
+          <div class="fname">${esc(f.name)} ${(addSearch||addCat==="custom"||addCat==="favoritos") ? `<span style="font-size:11px;color:var(--ink-soft);">${CATS[f.cat].icon}</span>`:""}</div>
           <div class="fmeta">${n0(f.kcal)} kcal · P ${n1(f.p)} · C ${n1(f.c)} · G ${n1(f.g)} <span style="opacity:.7;">/100g</span></div>
         </div>
         <div style="display:flex;align-items:center;gap:8px;">
@@ -355,7 +692,7 @@ function renderAdicionar(){
     });
   });
   const newCustomBtn = document.getElementById("btn-new-custom");
-  if(newCustomBtn) newCustomBtn.addEventListener("click", openCustomFoodModal);
+  if(newCustomBtn) newCustomBtn.addEventListener("click", ()=>openCustomFoodModal());
 
   el.querySelectorAll('[data-action="toggle"]').forEach(row=>{
     row.addEventListener("click", ()=>{
@@ -427,6 +764,7 @@ function addEntry(f, grams, meal){
     g: f.g*grams/100,
     meal: meal
   });
+  DB.foodUsage[f.id] = (DB.foodUsage[f.id]||0) + 1;
   saveDB();
   openFoodId = null;
   renderAdicionar();
@@ -441,7 +779,7 @@ function openCustomFoodModal(editId=null){
     <div class="field"><label>Nome</label><input type="text" id="cf-name" value="${existing?esc(existing.name):""}" placeholder="Ex: Lasanha caseira"></div>
     <div class="field"><label>Categoria</label>
       <select id="cf-cat">
-        ${Object.keys(CATS).filter(k=>k!=="custom").map(k=>`<option value="${k}" ${existing&&existing.cat===k?"selected":""}>${CATS[k].icon} ${CATS[k].label}</option>`).join("")}
+        ${Object.keys(CATS).filter(k=>k!=="custom"&&k!=="favoritos").map(k=>`<option value="${k}" ${existing&&existing.cat===k?"selected":""}>${CATS[k].icon} ${CATS[k].label}</option>`).join("")}
       </select>
     </div>
     <p class="desc" style="margin-top:6px;">Informe os valores nutricionais para <b>100 g</b> do alimento.</p>
@@ -768,7 +1106,10 @@ function renderHistorico(){
     return;
   }
 
-  const dates = Object.keys(DB.log).filter(d=>(DB.log[d]||[]).length>0).sort().reverse();
+  const dates = Array.from(new Set([
+    ...Object.keys(DB.log).filter(d=>(DB.log[d]||[]).length>0),
+    ...Object.keys(DB.habitLog).filter(d=>(DB.habitLog[d]||[]).length>0)
+  ])).sort().reverse();
   let html = `<div class="section-title">Dias registrados</div>`;
   if(dates.length===0){
     html += `<div class="empty-hint">Você ainda não tem dias registrados. Comece adicionando alimentos na aba "Adicionar".</div>`;
@@ -776,8 +1117,13 @@ function renderHistorico(){
   dates.forEach(d=>{
     const t = dayTotals(d);
     const count = (DB.log[d]||[]).length;
+    const habitCount = (DB.habitLog[d]||[]).length;
+    const parts = [];
+    if(count>0) parts.push(`${count} ${count===1?"item":"itens"}`);
+    if(habitCount>0) parts.push(`${habitCount} ${habitCount===1?"meta pessoal":"metas pessoais"}`);
+    const sub = parts.length ? parts.join(" · ") : "0 itens registrados";
     html += `<div class="hist-row" data-date="${d}">
-      <div><div class="hdate">${fmtDateShort(d)}${d===todayKey()?" · hoje":""}</div><div class="hsub">${count} ${count===1?"item":"itens"} registrados</div></div>
+      <div><div class="hdate">${fmtDateShort(d)}${d===todayKey()?" · hoje":""}</div><div class="hsub">${sub}</div></div>
       <div class="hkcal">${n0(t.kcal)} kcal</div>
     </div>`;
   });
@@ -1064,6 +1410,24 @@ function renderMetas(){
     </div>
 
     <div class="card">
+      <h3>Metas pessoais</h3>
+      <p class="desc">Hábitos que você quer acompanhar todo dia, além da nutrição — marcáveis (ex: tomar creatina) ou numéricas com meta (ex: beber 3L de água). Aparecem na aba Hoje e ficam registradas no Histórico de cada dia.</p>
+      <div id="habit-manage-list">${renderHabitManageList()}</div>
+      <button class="btn secondary" id="add-habit-btn">+ Adicionar meta pessoal</button>
+    </div>
+
+    <div class="card">
+      <h3>🔥 Sequências</h3>
+      <p class="desc">Escolha quais metas você quer acompanhar em dias seguidos — viram um contador na aba Hoje. Metas nutricionais contam como cumpridas quando você atinge pelo menos o valor definido.</p>
+      <div class="streak-options">
+        ${streakGoalOptions().map(o=>`<label class="streak-option">
+          <input type="checkbox" data-streak-key="${o.key}" ${DB.streakGoals.includes(o.key)?"checked":""}>
+          ${esc(o.label)}
+        </label>`).join("")}
+      </div>
+    </div>
+
+    <div class="card">
       <h3>Backup dos dados</h3>
       <p class="desc">Seus dados ficam salvos apenas neste navegador/aparelho. Exporte um backup de vez em quando para não perder o histórico.</p>
       <button class="btn secondary" id="exp-btn" style="margin-bottom:10px;">⬇️ Exportar backup (.json)</button>
@@ -1131,6 +1495,7 @@ function renderMetas(){
   document.getElementById("exp-btn").addEventListener("click", exportBackup);
   document.getElementById("imp-btn").addEventListener("click", ()=> document.getElementById("imp-file").click());
   document.getElementById("imp-file").addEventListener("change", importBackup);
+  wireHabitManageActions();
 }
 
 function exportBackup(){
@@ -1173,9 +1538,11 @@ function importBackup(ev){
 document.addEventListener("DOMContentLoaded", ()=>{
   loadDB();
   applyTheme();
+  addCat = defaultAddCat();
   document.querySelectorAll(".bottomnav button").forEach(btn=>{
     btn.addEventListener("click", ()=>{
-      if(btn.dataset.tab === "adicionar") addDate = todayKey();
+      if(btn.dataset.tab === "adicionar"){ addDate = todayKey(); addCat = defaultAddCat(); addSearch=""; }
+      if(btn.dataset.tab === "historico") histView = "list";
       switchTab(btn.dataset.tab);
     });
   });

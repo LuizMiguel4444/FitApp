@@ -141,6 +141,10 @@ main{padding:0 16px 24px;}
   background:none;border:1px dashed var(--line);color:var(--urucum);
   border-radius:10px;padding:4px 10px;font-size:12px;cursor:pointer;font-weight:600;
 }
+.meal-repeat{
+  background:none;border:1px solid var(--line);color:var(--ink-soft);
+  border-radius:10px;padding:4px 8px;font-size:12px;cursor:pointer;line-height:1;
+}
 .entry{
   display:flex;justify-content:space-between;align-items:center;gap:10px;
   padding:11px 16px;border-bottom:1px solid var(--line);
@@ -156,6 +160,59 @@ main{padding:0 16px 24px;}
 .empty-hint{
   padding:20px 16px;text-align:center;color:var(--ink-soft);font-size:13px;line-height:1.5;
 }
+
+/* ============ METAS PESSOAIS (hábitos) ============ */
+.habit-card{
+  background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+  margin-bottom:12px;padding:14px 16px;box-shadow:var(--shadow);
+}
+.habit-card h3{font-size:15px;margin-bottom:10px;}
+.habit-pills{display:flex;flex-wrap:wrap;gap:8px;}
+.habit-pill{
+  display:inline-flex;align-items:center;gap:6px;
+  padding:8px 14px;border-radius:999px;border:1.5px solid var(--line);
+  background:var(--paper);color:var(--ink-soft);font-size:13px;font-weight:600;cursor:pointer;
+}
+.habit-pill.done{background:var(--couve);border-color:var(--couve);color:#fff;}
+.habit-pill:disabled{cursor:default;opacity:.85;}
+.habit-pill .hp-check{font-size:12px;}
+.habit-numeric{margin-top:10px;padding-top:10px;border-top:1px solid var(--line);}
+.habit-numeric:first-child{margin-top:0;padding-top:0;border-top:none;}
+.hn-top{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:6px;}
+.hn-name{font-size:13.5px;font-weight:600;}
+.hn-val{font-size:12.5px;color:var(--ink-soft);white-space:nowrap;}
+.habit-numeric.done .hn-val{color:var(--couve);font-weight:700;}
+.hn-track{height:8px;border-radius:5px;background:var(--paper-2);overflow:hidden;margin-bottom:8px;}
+.hn-fill{height:100%;border-radius:5px;background:var(--couve);transition:width .3s ease;}
+.hn-controls{display:flex;gap:8px;}
+.hn-controls button{
+  flex:1;background:var(--paper);border:1px solid var(--line);color:var(--ink);
+  border-radius:9px;padding:7px 6px;font-size:12px;font-weight:600;cursor:pointer;
+}
+
+.streak-strip{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;}
+.streak-badge{
+  display:flex;align-items:center;gap:6px;background:var(--milho-bg);border:1px solid var(--milho);
+  border-radius:999px;padding:6px 12px 6px 10px;
+}
+.streak-badge .sb-fire{font-size:13px;}
+.streak-badge b{font-size:14px;color:var(--ink);}
+.streak-badge .sb-label{font-size:12px;color:var(--ink-soft);}
+
+.streak-options{display:flex;flex-direction:column;gap:2px;}
+.streak-option{
+  display:flex;align-items:center;gap:10px;padding:9px 2px;border-bottom:1px solid var(--line);
+  font-size:14px;cursor:pointer;
+}
+.streak-option:last-child{border-bottom:none;}
+.streak-option input{width:18px;height:18px;accent-color:var(--urucum);}
+
+.habit-manage-row{
+  display:flex;justify-content:space-between;align-items:center;
+  padding:10px 2px;border-bottom:1px solid var(--line);font-size:14px;
+}
+.habit-manage-row:last-child{border-bottom:none;}
+.habit-manage-row button{background:none;border:none;color:var(--ink-soft);font-size:15px;cursor:pointer;}
 
 /* ============ FOOD LIST / ADD TAB ============ */
 .date-picker-bar{

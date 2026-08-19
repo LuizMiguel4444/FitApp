@@ -4,6 +4,7 @@
 // kcal=calorias, p=proteína(g), c=carboidrato(g), g=gordura(g), f=fibra(g)
 
 const CATS = {
+  favoritos:  { label: "Mais usados",   icon: "🔥" },
   proteina:   { label: "Proteínas",     icon: "🍗" },
   leguminosa: { label: "Leguminosas",   icon: "🫘" },
   carboidrato:{ label: "Carboidratos",  icon: "🍚" },

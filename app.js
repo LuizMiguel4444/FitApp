@@ -424,10 +424,14 @@ function renderDayCard(dateKey, editable){
   </div>`;
 
   if(dateKey===todayKey() && DB.streakGoals.length>0){
-    html += `<div class="streak-strip">${DB.streakGoals.map(goalKey=>{
-      const n = computeStreak(goalKey);
-      return `<div class="streak-badge"><span class="sb-fire">🔥</span><b>${n}</b><span class="sb-label">${esc(streakLabel(goalKey))}</span></div>`;
-    }).join("")}</div>`;
+    const activeStreaks = DB.streakGoals
+      .map(goalKey=>({ goalKey, n: computeStreak(goalKey) }))
+      .filter(s=>s.n>0);
+    if(activeStreaks.length>0){
+      html += `<div class="streak-strip">${activeStreaks.map(s=>
+        `<div class="streak-badge"><span class="sb-fire">🔥</span><b>${s.n}</b><span class="sb-label">${esc(streakLabel(s.goalKey))}</span></div>`
+      ).join("")}</div>`;
+    }
   }
 
   const habits = habitsForDay(dateKey);
@@ -588,13 +592,7 @@ function editEntry(dateKey, entryId){
 // ============================================================
 // TAB: ADICIONAR
 // ============================================================
-function renderAdicionar(){
-  const el = document.getElementById("tab-adicionar");
-  let chips = "";
-  Object.keys(CATS).forEach(catKey=>{
-    chips += `<button class="cat-chip ${addCat===catKey && !addSearch ? "active":""}" data-cat="${catKey}">${CATS[catKey].icon} ${CATS[catKey].label}</button>`;
-  });
-
+function buildFoodListHtml(){
   let listSource;
   if(addSearch.trim()!==""){
     const q = addSearch.trim().toLowerCase();
@@ -652,6 +650,74 @@ function renderAdicionar(){
       </div>
     </div>`;
   });
+  return listHtml;
+}
+
+// Renderiza SÓ a lista de alimentos (dentro de #food-list-container) e conecta
+// os eventos dela. Chamada a cada letra digitada na busca — por isso nunca toca
+// no campo de busca/categorias/data em si, só no conteúdo da lista abaixo deles.
+// Isso é o que evita o campo de texto ser destruído e recriado a cada tecla
+// (o que travava a digitação e o backspace segurado no Android).
+function renderFoodList(){
+  const container = document.getElementById("food-list-container");
+  if(!container) return;
+  container.innerHTML = buildFoodListHtml();
+
+  const newCustomBtn = document.getElementById("btn-new-custom");
+  if(newCustomBtn) newCustomBtn.addEventListener("click", ()=>openCustomFoodModal());
+
+  container.querySelectorAll('[data-action="toggle"]').forEach(row=>{
+    row.addEventListener("click", ()=>{
+      const id = row.parentElement.dataset.food;
+      openFoodId = (openFoodId===id) ? null : id;
+      renderFoodList();
+    });
+  });
+  container.querySelectorAll('[data-action="editcustom"]').forEach(btn=>{
+    btn.addEventListener("click", (ev)=>{
+      ev.stopPropagation();
+      const id = btn.closest(".food-card").dataset.food;
+      openCustomFoodModal(id);
+    });
+  });
+  container.querySelectorAll('[data-action="delcustom"]').forEach(btn=>{
+    btn.addEventListener("click", (ev)=>{
+      ev.stopPropagation();
+      const id = btn.closest(".food-card").dataset.food;
+      if(confirm("Excluir este alimento personalizado? Os registros já feitos com ele não serão afetados.")){
+        DB.customFoods = DB.customFoods.filter(f=>f.id!==id);
+        saveDB();
+        renderFoodList();
+      }
+    });
+  });
+  container.querySelectorAll('[data-grams]').forEach(inp=>{
+    inp.addEventListener("input", ()=>{
+      const f = findFood(inp.dataset.grams);
+      const grams = parseFloat(inp.value.replace(",","."))||0;
+      const prevEl = container.querySelector(`[data-preview="${f.id}"]`);
+      if(prevEl) prevEl.innerHTML = previewInner(f, grams);
+    });
+  });
+  container.querySelectorAll('[data-action="confirmadd"]').forEach(btn=>{
+    btn.addEventListener("click", ()=>{
+      const f = findFood(btn.dataset.food);
+      const gramsInp = container.querySelector(`[data-grams="${f.id}"]`);
+      const mealSel = container.querySelector(`[data-meal="${f.id}"]`);
+      const grams = parseFloat(gramsInp.value.replace(",","."));
+      if(isNaN(grams) || grams<=0){ alert("Informe uma quantidade válida em gramas."); return; }
+      pendingMeal = mealSel.value;
+      addEntry(f, grams, mealSel.value);
+    });
+  });
+}
+
+function renderAdicionar(){
+  const el = document.getElementById("tab-adicionar");
+  let chips = "";
+  Object.keys(CATS).forEach(catKey=>{
+    chips += `<button class="cat-chip ${addCat===catKey && !addSearch ? "active":""}" data-cat="${catKey}">${CATS[catKey].icon} ${CATS[catKey].label}</button>`;
+  });
 
   el.innerHTML = `
     <div class="date-picker-bar ${addDate!==todayKey() ? "not-today":""}">
@@ -663,7 +729,7 @@ function renderAdicionar(){
     </div>
     <div class="search-wrap"><input type="text" placeholder="Buscar alimento..." id="food-search" value="${esc(addSearch)}"></div>
     <div class="cat-tabs">${chips}</div>
-    ${listHtml}
+    <div id="food-list-container"></div>
   `;
 
   document.getElementById("add-date").addEventListener("change", (e)=>{
@@ -680,64 +746,15 @@ function renderAdicionar(){
   document.getElementById("food-search").addEventListener("input", (e)=>{
     addSearch = e.target.value;
     openFoodId = null;
-    renderAdicionar();
-    const inp = document.getElementById("food-search");
-    inp.focus();
-    const pos = inp.value.length;
-    inp.setSelectionRange(pos, pos);
+    renderFoodList(); // só a lista é refeita — o campo de busca nunca é recriado
   });
   el.querySelectorAll(".cat-chip").forEach(c=>{
     c.addEventListener("click", ()=>{
       addCat = c.dataset.cat; addSearch=""; openFoodId=null; renderAdicionar();
     });
   });
-  const newCustomBtn = document.getElementById("btn-new-custom");
-  if(newCustomBtn) newCustomBtn.addEventListener("click", ()=>openCustomFoodModal());
 
-  el.querySelectorAll('[data-action="toggle"]').forEach(row=>{
-    row.addEventListener("click", ()=>{
-      const id = row.parentElement.dataset.food;
-      openFoodId = (openFoodId===id) ? null : id;
-      renderAdicionar();
-    });
-  });
-  el.querySelectorAll('[data-action="editcustom"]').forEach(btn=>{
-    btn.addEventListener("click", (ev)=>{
-      ev.stopPropagation();
-      const id = btn.closest(".food-card").dataset.food;
-      openCustomFoodModal(id);
-    });
-  });
-  el.querySelectorAll('[data-action="delcustom"]').forEach(btn=>{
-    btn.addEventListener("click", (ev)=>{
-      ev.stopPropagation();
-      const id = btn.closest(".food-card").dataset.food;
-      if(confirm("Excluir este alimento personalizado? Os registros já feitos com ele não serão afetados.")){
-        DB.customFoods = DB.customFoods.filter(f=>f.id!==id);
-        saveDB();
-        renderAdicionar();
-      }
-    });
-  });
-  el.querySelectorAll('[data-grams]').forEach(inp=>{
-    inp.addEventListener("input", ()=>{
-      const f = findFood(inp.dataset.grams);
-      const grams = parseFloat(inp.value.replace(",","."))||0;
-      const prevEl = document.querySelector(`[data-preview="${f.id}"]`);
-      if(prevEl) prevEl.innerHTML = previewInner(f, grams);
-    });
-  });
-  el.querySelectorAll('[data-action="confirmadd"]').forEach(btn=>{
-    btn.addEventListener("click", ()=>{
-      const f = findFood(btn.dataset.food);
-      const gramsInp = document.querySelector(`[data-grams="${f.id}"]`);
-      const mealSel = document.querySelector(`[data-meal="${f.id}"]`);
-      const grams = parseFloat(gramsInp.value.replace(",","."));
-      if(isNaN(grams) || grams<=0){ alert("Informe uma quantidade válida em gramas."); return; }
-      pendingMeal = mealSel.value;
-      addEntry(f, grams, mealSel.value);
-    });
-  });
+  renderFoodList();
 }
 
 function previewInner(f, grams){

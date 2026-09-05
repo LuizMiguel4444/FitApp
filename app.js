@@ -610,6 +610,15 @@ function buildFoodListHtml(){
     listSource = allFoods().filter(f=>f.cat===addCat);
   }
 
+  // Com centenas de alimentos, uma busca ampla (ou categorias grandes) pode
+  // retornar muitos resultados de uma vez — renderizar tudo isso a cada tecla
+  // digitada pesa e pode voltar a travar a digitação. Por isso, limita quantos
+  // itens são de fato desenhados na tela por vez.
+  const MAX_RESULTS = 40;
+  const totalMatches = listSource.length;
+  const truncated = totalMatches > MAX_RESULTS;
+  if(truncated) listSource = listSource.slice(0, MAX_RESULTS);
+
   let listHtml = "";
   if(addCat==="custom" && !addSearch){
     listHtml += `<div class="custom-add-card" id="btn-new-custom">＋ Adicionar novo alimento</div>`;
@@ -650,6 +659,9 @@ function buildFoodListHtml(){
       </div>
     </div>`;
   });
+  if(truncated){
+    listHtml += `<div class="empty-hint">Mostrando os ${MAX_RESULTS} primeiros de ${totalMatches} resultados — refine a busca para achar mais rápido.</div>`;
+  }
   return listHtml;
 }
 

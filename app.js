@@ -8,6 +8,7 @@ const STORAGE_KEY = "pratoDoDiaDB_v1";
 let DB = {
   goals: { kcal: 2709, p: 187, c: 321, g: 75 }, // sugestão inicial editável em "Metas"
   customFoods: [],
+  readyMeals: [], // [ {id, name, items:[{foodId, grams}]} ] — refeições prontas (editáveis)
   log: {},     // { "2026-08-10": [ {id, foodId, name, cat, grams, per100:{kcal,p,c,g}, kcal,p,c,g, meal} ] }
   weight: [],  // [ {id, date, kg} ]
   habits: [],     // [ {id, name, type:'check'|'numeric', target?, unit?, step?} ]
@@ -78,6 +79,7 @@ function loadDB(){
       DB.goals = Object.assign({ kcal:2709, p:187, c:321, g:75 }, parsed.goals||{});
       DB.customFoods = (parsed.customFoods || []).map(normalizeCustomFood).filter(Boolean);
       DB.log = parsed.log || {};
+      DB.readyMeals = Array.isArray(parsed.readyMeals) ? parsed.readyMeals.map(normalizeReadyMeal).filter(Boolean) : seedReadyMeals();
       DB.weight = parsed.weight || [];
       // "habits" é novo: se não existir no save (usuário antigo) OU for a primeira vez
       // (save sem essa chave), semeia dois exemplos de partida — só nesse caso,
@@ -93,6 +95,7 @@ function loadDB(){
       DB.theme = parsed.theme || "light";
     }else{
       // instalação nova (sem nada salvo ainda): também semeia os exemplos
+      DB.readyMeals = seedReadyMeals();
       DB.habits = [
         { id:"habit_"+uid(), name:"Tomar creatina", type:"check" },
         { id:"habit_"+uid(), name:"Fazer vacuum", type:"check" }
@@ -712,8 +715,18 @@ function buildFoodListHtml(){
 }
 
 // ============ refeições prontas ============
+function normalizeReadyMeal(m){
+  if(!m || !m.name || !Array.isArray(m.items)) return null;
+  const items = m.items.map(i=>({ foodId:String((i&&i.foodId)||""), grams:Number(i&&i.grams)||0 })).filter(i=>i.foodId && i.grams>0);
+  return { id:String(m.id||("rm_"+uid())), name:String(m.name), items };
+}
+// As refeições que já vêm no app entram uma única vez como ponto de partida;
+// depois disso são do usuário e podem ser editadas ou excluídas.
+function seedReadyMeals(){
+  return READY_MEALS.map(m=>({ id:m.id, name:m.name, items:m.items.map(([foodId,grams])=>({ foodId, grams })) }));
+}
 function readyItems(m){
-  return m.items.map(([id,grams])=>({ food:findFood(id), grams })).filter(x=>x.food);
+  return m.items.map(i=>({ food:findFood(i.foodId), grams:i.grams })).filter(x=>x.food);
 }
 function readyTotals(items){
   return items.reduce((t,x)=>{
@@ -723,20 +736,27 @@ function readyTotals(items){
   }, { kcal:0, p:0, c:0, g:0 });
 }
 function buildReadyMealsHtml(){
-  let html = `<div class="empty-hint" style="padding:0 2px 10px;text-align:left;">Toque numa refeição, ajuste ou desmarque o que quiser e adicione tudo de uma vez.</div>`;
-  READY_MEALS.forEach(m=>{
+  let html = `<div class="custom-add-card" id="btn-new-ready">＋ Criar refeição pronta</div>`;
+  if(DB.readyMeals.length===0){
+    html += `<div class="empty-hint">Você ainda não tem refeições prontas. Toque acima para montar a primeira.</div>`;
+  }
+  DB.readyMeals.forEach(m=>{
     const items = readyItems(m);
-    if(items.length===0) return;
     const t = readyTotals(items);
-    html += `<div class="food-card" data-ready="${m.id}">
+    html += `<div class="food-card" data-ready="${esc(m.id)}">
       <div class="food-row" data-action="rm-toggle">
         <div>
           <div class="fname">${esc(m.name)}</div>
-          <div class="fmeta">${items.length} itens · ${n0(t.kcal)} kcal · P ${n1(t.p)} · C ${n1(t.c)} · G ${n1(t.g)}</div>
+          <div class="fmeta">${items.length} ${items.length===1?"item":"itens"} · ${n0(t.kcal)} kcal · P ${n1(t.p)} · C ${n1(t.c)} · G ${n1(t.g)}</div>
         </div>
-        <span class="fkcal">▾</span>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <button data-action="rm-edit" title="Editar" style="background:none;border:none;color:var(--ink-soft);font-size:15px;">✏️</button>
+          <button data-action="rm-del" title="Excluir" style="background:none;border:none;color:var(--ink-soft);font-size:15px;">🗑</button>
+          <span class="fkcal">▾</span>
+        </div>
       </div>
       <div class="food-panel ${openReadyId===m.id ? "open":""}">
+        ${items.length===0 ? `<div class="empty-hint" style="padding:0 0 10px;text-align:left;">Esta refeição está sem alimentos. Toque em ✏️ para escolher.</div>` : `
         ${items.map((x,i)=>`<div class="rm-item">
           <label class="rm-lab"><input type="checkbox" checked data-rm-check="${i}"><span>${esc(x.food.name)}</span></label>
           <input type="text" inputmode="decimal" value="${x.grams}" data-rm-grams="${i}"><span class="rm-g">g</span>
@@ -745,7 +765,7 @@ function buildReadyMealsHtml(){
           <select data-rm-meal>${Object.keys(MEALS).map(k=>`<option value="${k}" ${k===pendingMeal?"selected":""}>${MEALS[k]}</option>`).join("")}</select>
         </div>
         <div class="preview-macros" data-rm-preview>${previewInner(t,100)}</div>
-        <button class="btn" data-action="rm-add">Adicionar refeição completa</button>
+        <button class="btn" data-action="rm-add">Adicionar refeição completa</button>`}
       </div>
     </div>`;
   });
@@ -761,19 +781,38 @@ function readyChosen(card, items){
   return out;
 }
 function wireReadyMeals(container){
+  const newBtn = document.getElementById("btn-new-ready");
+  if(newBtn) newBtn.addEventListener("click", ()=>openReadyMealModal());
   container.querySelectorAll("[data-ready]").forEach(card=>{
-    const m = READY_MEALS.find(x=>x.id===card.dataset.ready);
+    const m = DB.readyMeals.find(x=>x.id===card.dataset.ready);
+    if(!m) return;
     const items = readyItems(m);
     card.querySelector('[data-action="rm-toggle"]').addEventListener("click", ()=>{
       openReadyId = (openReadyId===m.id) ? null : m.id;
       renderFoodList();
     });
+    card.querySelector('[data-action="rm-edit"]').addEventListener("click", (ev)=>{
+      ev.stopPropagation();
+      openReadyMealModal(m.id);
+    });
+    card.querySelector('[data-action="rm-del"]').addEventListener("click", (ev)=>{
+      ev.stopPropagation();
+      if(confirm(`Excluir a refeição pronta "${m.name}"? Os registros já feitos não serão afetados.`)){
+        DB.readyMeals = DB.readyMeals.filter(x=>x.id!==m.id);
+        if(openReadyId===m.id) openReadyId = null;
+        saveDB();
+        renderFoodList();
+        toast("Refeição pronta excluída.");
+      }
+    });
+    const addBtn = card.querySelector('[data-action="rm-add"]');
+    if(!addBtn) return;
     const redraw = ()=>{
       card.querySelector("[data-rm-preview]").innerHTML = previewInner(readyTotals(readyChosen(card, items)), 100);
     };
     card.addEventListener("input", redraw);
     card.addEventListener("change", redraw);
-    card.querySelector('[data-action="rm-add"]').addEventListener("click", ()=>{
+    addBtn.addEventListener("click", ()=>{
       const chosen = readyChosen(card, items);
       if(chosen.length===0){ alert("Marque pelo menos um item com quantidade válida."); return; }
       const meal = card.querySelector("[data-rm-meal]").value;
@@ -785,6 +824,90 @@ function wireReadyMeals(container){
       const quando = addDate===todayKey() ? MEALS[meal].toLowerCase() : `${MEALS[meal].toLowerCase()} de ${fmtDateShort(addDate)}`;
       toast(`✓ ${chosen.length} ${chosen.length===1?"item adicionado":"itens adicionados"} em ${quando}`);
     });
+  });
+}
+
+// Criar / editar uma refeição pronta: nome + alimentos com quantidades.
+function openReadyMealModal(editId=null){
+  const existing = editId ? DB.readyMeals.find(m=>m.id===editId) : null;
+  const draft = { items: existing ? existing.items.filter(i=>findFood(i.foodId)).map(i=>({ foodId:i.foodId, grams:i.grams })) : [] };
+  const norm = (t)=>String(t).normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase();
+  openModal(`
+    <h3>${existing?"Editar":"Nova"} refeição pronta</h3>
+    <div class="field"><label>Nome</label><input type="text" id="rme-name" value="${existing?esc(existing.name):""}" placeholder="Ex: Arroz, feijão e frango"></div>
+    <div class="field"><label>Alimentos da refeição</label><div id="rme-items"></div></div>
+    <div class="preview-macros" id="rme-total"></div>
+    <div class="field" style="margin-top:14px;"><label>Adicionar alimento</label><input type="text" id="rme-search" placeholder="Buscar alimento..."></div>
+    <div id="rme-results"></div>
+    <div style="display:flex;gap:10px;margin-top:14px;">
+      <button class="btn secondary" id="rme-cancel" style="width:auto;flex:1;">Cancelar</button>
+      <button class="btn" id="rme-save" style="flex:1;">${existing?"Salvar alterações":"Salvar refeição"}</button>
+    </div>
+  `);
+  const drawTotals = ()=>{
+    const list = draft.items.map(i=>({ food:findFood(i.foodId), grams:i.grams })).filter(x=>x.food);
+    document.getElementById("rme-total").innerHTML = previewInner(readyTotals(list), 100);
+  };
+  const drawItems = ()=>{
+    const box = document.getElementById("rme-items");
+    box.innerHTML = draft.items.length===0
+      ? `<div class="empty-hint" style="padding:8px 0;text-align:left;">Nenhum alimento ainda — busque abaixo para adicionar.</div>`
+      : draft.items.map((it,i)=>`<div class="rm-item">
+          <span class="rm-name">${esc(findFood(it.foodId).name)}</span>
+          <input type="text" inputmode="decimal" value="${it.grams}" data-rme-grams="${i}"><span class="rm-g">g</span>
+          <button class="rm-del" data-rme-del="${i}" title="Remover">✕</button>
+        </div>`).join("");
+    box.querySelectorAll("[data-rme-grams]").forEach(inp=>inp.addEventListener("input", ()=>{
+      draft.items[Number(inp.dataset.rmeGrams)].grams = parseFloat(String(inp.value).replace(",","."))||0;
+      drawTotals();
+    }));
+    box.querySelectorAll("[data-rme-del]").forEach(btn=>btn.addEventListener("click", ()=>{
+      draft.items.splice(Number(btn.dataset.rmeDel), 1);
+      drawItems();
+    }));
+    drawTotals();
+  };
+  const drawResults = ()=>{
+    const q = norm(document.getElementById("rme-search").value.trim());
+    const list = q
+      ? allFoods().filter(f=>norm(f.name).includes(q)).slice(0,8)
+      : Object.entries(DB.foodUsage||{}).sort((a,b)=>b[1]-a[1]).map(([id])=>findFood(id)).filter(Boolean).slice(0,6);
+    const box = document.getElementById("rme-results");
+    if(list.length===0){
+      box.innerHTML = q ? `<div class="empty-hint" style="padding:8px 0;">Nenhum alimento encontrado.</div>` : ``;
+      return;
+    }
+    box.innerHTML = `<div class="rp-list" style="max-height:30vh;">${list.map(f=>`<div class="rme-res" data-rme-add="${esc(f.id)}"><span>${esc(f.name)}</span><span>${n0(f.kcal)} kcal/100g</span></div>`).join("")}</div>`;
+    box.querySelectorAll("[data-rme-add]").forEach(el=>el.addEventListener("click", ()=>{
+      draft.items.push({ foodId:el.dataset.rmeAdd, grams:100 });
+      drawItems();
+      const inputs = document.querySelectorAll("#rme-items [data-rme-grams]");
+      const last = inputs[inputs.length-1];
+      if(last){ last.focus(); last.select(); }
+    }));
+  };
+  drawItems();
+  drawResults();
+  document.getElementById("rme-search").addEventListener("input", drawResults);
+  document.getElementById("rme-cancel").addEventListener("click", closeModal);
+  document.getElementById("rme-save").addEventListener("click", ()=>{
+    const name = document.getElementById("rme-name").value.trim();
+    if(!name){ alert("Dê um nome para a refeição pronta."); return; }
+    if(draft.items.length===0){ alert("Adicione pelo menos um alimento."); return; }
+    if(draft.items.some(i=>!(i.grams>0))){ alert("Informe uma quantidade maior que zero em todos os alimentos (ou remova o item)."); return; }
+    if(DB.readyMeals.some(m=>m.id!==editId && m.name.toLowerCase()===name.toLowerCase())){ alert("Já existe uma refeição pronta com esse nome."); return; }
+    if(existing){
+      existing.name = name; existing.items = draft.items;
+      openReadyId = existing.id;
+    }else{
+      const created = { id:"rm_"+uid(), name, items:draft.items };
+      DB.readyMeals.unshift(created);
+      openReadyId = created.id;
+    }
+    saveDB();
+    closeModal();
+    renderFoodList();
+    toast("✓ Refeição pronta salva.");
   });
 }
 
@@ -1681,6 +1804,7 @@ function importBackup(ev){
       if(!confirm("Isso vai substituir todos os dados atuais pelo conteúdo do backup. Deseja continuar?")) return;
       DB = Object.assign({ goals:{kcal:2709,p:187,c:321,g:75}, customFoods:[], log:{}, weight:[], theme:"light" }, parsed);
       DB.customFoods = (DB.customFoods||[]).map(normalizeCustomFood).filter(Boolean);
+      DB.readyMeals = Array.isArray(DB.readyMeals) ? DB.readyMeals.map(normalizeReadyMeal).filter(Boolean) : seedReadyMeals();
       saveDB();
       applyTheme();
       renderCurrentTab();

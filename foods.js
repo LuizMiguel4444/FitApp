@@ -815,8 +815,9 @@ const FOODS = [
   { id:"whisky", name:"Whisky", cat:"outro", kcal:250, p:0, c:0, g:0 }
 ];
 
-// Refeições prontas — cada item é [id do alimento, gramas]. Na hora de adicionar,
-// dá para desmarcar itens e ajustar as quantidades antes de confirmar.
+// Refeições prontas iniciais — cada item é [id do alimento, gramas]. Entram no app
+// uma única vez (na primeira abertura); depois ficam salvas no aparelho e o usuário
+// pode editá-las, excluí-las ou criar as suas na aba Adicionar > Refeições prontas.
 const READY_MEALS = [
   { id:"pf_feijao_arroz_macarrao_ovo", name:"Feijão, arroz, macarrão e ovo", items:[["feijao_carioca_cozido",120],["arroz_refogado",130],["macarrao_molho_tomate",120],["ovo_cozido",50]] },
   { id:"pf_frango_arroz_feijao", name:"Frango grelhado, arroz, feijão e salada", items:[["frango_peito_grelhado",120],["arroz_branco_cozido",130],["feijao_carioca_cozido",100],["alface",40],["tomate",60]] },

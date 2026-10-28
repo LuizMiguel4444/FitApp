@@ -22,6 +22,7 @@ let currentTab = "hoje";
 let addCat = "proteina";
 let addSearch = "";
 let openFoodId = null;
+let openReadyId = null; // refeição pronta aberta na aba Adicionar
 let pendingMeal = "almoco";
 let addDate = todayKey(); // data-alvo da aba Adicionar — padrão: hoje
 let histView = "list";
@@ -313,20 +314,65 @@ function findPreviousMealEntries(beforeDate, mealKey){
   }
   return null;
 }
+function mealSourcesBefore(beforeDate, mealKey){
+  return Object.keys(DB.log).filter(d=>d<beforeDate).sort().reverse()
+    .map(d=>({ date:d, entries:(DB.log[d]||[]).filter(e=>e.meal===mealKey) }))
+    .filter(x=>x.entries.length>0);
+}
+function relDayLabel(key){
+  const [y,m,d] = key.split("-").map(Number);
+  const dt = new Date(y, m-1, d);
+  const t = new Date(); t.setHours(0,0,0,0);
+  const diff = Math.round((t-dt)/86400000);
+  if(diff===1) return "Ontem";
+  if(diff===2) return "Anteontem";
+  const w = dt.toLocaleDateString("pt-BR", { weekday:"long" });
+  return w.charAt(0).toUpperCase()+w.slice(1);
+}
+// Abre o seletor de dia (com prévia) para copiar uma refeição de outro dia.
 function repeatMeal(dateKey, mealKey){
-  const found = findPreviousMealEntries(dateKey, mealKey);
-  if(!found){ toast("Nenhum registro anterior encontrado para essa refeição."); return; }
-  if(!DB.log[dateKey]) DB.log[dateKey] = [];
-  found.entries.forEach(e=>{
-    DB.log[dateKey].push({
-      id: uid(), foodId: e.foodId, name: e.name, cat: e.cat, grams: e.grams,
-      per100: { ...e.per100 }, kcal: e.kcal, p: e.p, c: e.c, g: e.g, meal: mealKey
+  const sources = mealSourcesBefore(dateKey, mealKey).slice(0,60);
+  if(!sources.length){ toast("Nenhum registro anterior encontrado para essa refeição."); return; }
+  const opts = sources.map((s,i)=>{
+    const kcal = s.entries.reduce((a,e)=>a+e.kcal,0);
+    return `<option value="${i}">${esc(relDayLabel(s.date))} · ${fmtDateShort(s.date)} · ${s.entries.length} ${s.entries.length===1?"item":"itens"} · ${n0(kcal)} kcal</option>`;
+  }).join("");
+  openModal(`
+    <h3>🔁 Repetir ${esc(MEALS[mealKey].toLowerCase())}</h3>
+    <div class="field"><label>Copiar de qual dia?</label><select id="rp-src">${opts}</select></div>
+    <div id="rp-preview"></div>
+    <div style="display:flex;gap:10px;margin-top:14px;">
+      <button class="btn secondary" id="rp-cancel" style="width:auto;flex:1;">Cancelar</button>
+      <button class="btn" id="rp-ok" style="flex:1;">Repetir</button>
+    </div>
+  `);
+  const sel = document.getElementById("rp-src");
+  const draw = ()=>{
+    const src = sources[Number(sel.value)];
+    const t = readyTotals(src.entries.map(e=>({ food:{ kcal:e.kcal, p:e.p, c:e.c, g:e.g }, grams:100 })));
+    document.getElementById("rp-preview").innerHTML = `
+      <div class="rp-list">${src.entries.map(e=>`<div class="rp-row"><span>${esc(e.name)}</span><span>${n0(e.grams)} g · ${n0(e.kcal)} kcal</span></div>`).join("")}</div>
+      <div class="preview-macros" style="margin-top:10px;">${previewInner(t,100)}</div>`;
+    document.getElementById("rp-ok").textContent = `Repetir ${src.entries.length} ${src.entries.length===1?"item":"itens"}`;
+  };
+  sel.addEventListener("change", draw);
+  draw();
+  document.getElementById("rp-cancel").addEventListener("click", closeModal);
+  document.getElementById("rp-ok").addEventListener("click", ()=>{
+    const src = sources[Number(sel.value)];
+    if(!DB.log[dateKey]) DB.log[dateKey] = [];
+    src.entries.forEach(e=>{
+      DB.log[dateKey].push({
+        id: uid(), foodId: e.foodId, name: e.name, cat: e.cat, grams: e.grams,
+        per100: { ...e.per100 }, kcal: e.kcal, p: e.p, c: e.c, g: e.g, meal: mealKey
+      });
+      if(e.foodId) DB.foodUsage[e.foodId] = (DB.foodUsage[e.foodId]||0) + 1;
     });
-    if(e.foodId) DB.foodUsage[e.foodId] = (DB.foodUsage[e.foodId]||0) + 1;
+    saveDB();
+    closeModal();
+    renderCurrentTab();
+    toast(`✓ ${src.entries.length} ${src.entries.length===1?"item repetido":"itens repetidos"} de ${fmtDateShort(src.date)}`);
   });
-  saveDB();
-  renderCurrentTab();
-  toast(`✓ ${found.entries.length} ${found.entries.length===1?"item repetido":"itens repetidos"} de ${fmtDateShort(found.date)}`);
 }
 
 function renderHabitManageList(){
@@ -471,7 +517,7 @@ function renderDayCard(dateKey, editable){
         <h3>${MEALS[mealKey]}</h3>
         <div style="display:flex;align-items:center;gap:8px;">
           <span class="mkcal">${n0(mealKcal)} kcal</span>
-          ${prevMeal ? `<button class="meal-repeat" data-repeat-meal="${mealKey}" title="Repetir de ${fmtDateShort(prevMeal.date)}">🔁</button>` : ``}
+          ${prevMeal ? `<button class="meal-repeat" data-repeat-meal="${mealKey}" title="Repetir refeição de outro dia">🔁</button>` : ``}
           ${editable ? `<button class="meal-add" data-meal="${mealKey}">+ adicionar</button>` : ``}
         </div>
       </div>`;
@@ -665,6 +711,83 @@ function buildFoodListHtml(){
   return listHtml;
 }
 
+// ============ refeições prontas ============
+function readyItems(m){
+  return m.items.map(([id,grams])=>({ food:findFood(id), grams })).filter(x=>x.food);
+}
+function readyTotals(items){
+  return items.reduce((t,x)=>{
+    const k = x.grams/100;
+    t.kcal += x.food.kcal*k; t.p += x.food.p*k; t.c += x.food.c*k; t.g += x.food.g*k;
+    return t;
+  }, { kcal:0, p:0, c:0, g:0 });
+}
+function buildReadyMealsHtml(){
+  let html = `<div class="empty-hint" style="padding:0 2px 10px;text-align:left;">Toque numa refeição, ajuste ou desmarque o que quiser e adicione tudo de uma vez.</div>`;
+  READY_MEALS.forEach(m=>{
+    const items = readyItems(m);
+    if(items.length===0) return;
+    const t = readyTotals(items);
+    html += `<div class="food-card" data-ready="${m.id}">
+      <div class="food-row" data-action="rm-toggle">
+        <div>
+          <div class="fname">${esc(m.name)}</div>
+          <div class="fmeta">${items.length} itens · ${n0(t.kcal)} kcal · P ${n1(t.p)} · C ${n1(t.c)} · G ${n1(t.g)}</div>
+        </div>
+        <span class="fkcal">▾</span>
+      </div>
+      <div class="food-panel ${openReadyId===m.id ? "open":""}">
+        ${items.map((x,i)=>`<div class="rm-item">
+          <label class="rm-lab"><input type="checkbox" checked data-rm-check="${i}"><span>${esc(x.food.name)}</span></label>
+          <input type="text" inputmode="decimal" value="${x.grams}" data-rm-grams="${i}"><span class="rm-g">g</span>
+        </div>`).join("")}
+        <div class="field" style="margin-top:12px;"><label>Refeição</label>
+          <select data-rm-meal>${Object.keys(MEALS).map(k=>`<option value="${k}" ${k===pendingMeal?"selected":""}>${MEALS[k]}</option>`).join("")}</select>
+        </div>
+        <div class="preview-macros" data-rm-preview>${previewInner(t,100)}</div>
+        <button class="btn" data-action="rm-add">Adicionar refeição completa</button>
+      </div>
+    </div>`;
+  });
+  return html;
+}
+function readyChosen(card, items){
+  const out = [];
+  items.forEach((x,i)=>{
+    const on = card.querySelector(`[data-rm-check="${i}"]`).checked;
+    const g = parseFloat(String(card.querySelector(`[data-rm-grams="${i}"]`).value).replace(",","."));
+    if(on && g>0) out.push({ food:x.food, grams:g });
+  });
+  return out;
+}
+function wireReadyMeals(container){
+  container.querySelectorAll("[data-ready]").forEach(card=>{
+    const m = READY_MEALS.find(x=>x.id===card.dataset.ready);
+    const items = readyItems(m);
+    card.querySelector('[data-action="rm-toggle"]').addEventListener("click", ()=>{
+      openReadyId = (openReadyId===m.id) ? null : m.id;
+      renderFoodList();
+    });
+    const redraw = ()=>{
+      card.querySelector("[data-rm-preview]").innerHTML = previewInner(readyTotals(readyChosen(card, items)), 100);
+    };
+    card.addEventListener("input", redraw);
+    card.addEventListener("change", redraw);
+    card.querySelector('[data-action="rm-add"]').addEventListener("click", ()=>{
+      const chosen = readyChosen(card, items);
+      if(chosen.length===0){ alert("Marque pelo menos um item com quantidade válida."); return; }
+      const meal = card.querySelector("[data-rm-meal]").value;
+      pendingMeal = meal;
+      chosen.forEach(x=>logFood(addDate, x.food, x.grams, meal));
+      saveDB();
+      openReadyId = null;
+      renderAdicionar();
+      const quando = addDate===todayKey() ? MEALS[meal].toLowerCase() : `${MEALS[meal].toLowerCase()} de ${fmtDateShort(addDate)}`;
+      toast(`✓ ${chosen.length} ${chosen.length===1?"item adicionado":"itens adicionados"} em ${quando}`);
+    });
+  });
+}
+
 // Renderiza SÓ a lista de alimentos (dentro de #food-list-container) e conecta
 // os eventos dela. Chamada a cada letra digitada na busca — por isso nunca toca
 // no campo de busca/categorias/data em si, só no conteúdo da lista abaixo deles.
@@ -673,6 +796,11 @@ function buildFoodListHtml(){
 function renderFoodList(){
   const container = document.getElementById("food-list-container");
   if(!container) return;
+  if(addCat==="prontas" && addSearch.trim()===""){
+    container.innerHTML = buildReadyMealsHtml();
+    wireReadyMeals(container);
+    return;
+  }
   container.innerHTML = buildFoodListHtml();
 
   const newCustomBtn = document.getElementById("btn-new-custom");
@@ -762,7 +890,7 @@ function renderAdicionar(){
   });
   el.querySelectorAll(".cat-chip").forEach(c=>{
     c.addEventListener("click", ()=>{
-      addCat = c.dataset.cat; addSearch=""; openFoodId=null; renderAdicionar();
+      addCat = c.dataset.cat; addSearch=""; openFoodId=null; openReadyId=null; renderAdicionar();
     });
   });
 
@@ -777,8 +905,7 @@ function previewInner(f, grams){
     <div><b>${n1(g)}</b><span>gordura</span></div>`;
 }
 
-function addEntry(f, grams, meal){
-  const dateKey = addDate;
+function logFood(dateKey, f, grams, meal){
   if(!DB.log[dateKey]) DB.log[dateKey] = [];
   DB.log[dateKey].push({
     id: uid(),
@@ -794,6 +921,11 @@ function addEntry(f, grams, meal){
     meal: meal
   });
   DB.foodUsage[f.id] = (DB.foodUsage[f.id]||0) + 1;
+}
+
+function addEntry(f, grams, meal){
+  const dateKey = addDate;
+  logFood(dateKey, f, grams, meal);
   saveDB();
   openFoodId = null;
   renderAdicionar();
@@ -808,7 +940,7 @@ function openCustomFoodModal(editId=null){
     <div class="field"><label>Nome</label><input type="text" id="cf-name" value="${existing?esc(existing.name):""}" placeholder="Ex: Lasanha caseira"></div>
     <div class="field"><label>Categoria</label>
       <select id="cf-cat">
-        ${Object.keys(CATS).filter(k=>k!=="custom"&&k!=="favoritos").map(k=>`<option value="${k}" ${existing&&existing.cat===k?"selected":""}>${CATS[k].icon} ${CATS[k].label}</option>`).join("")}
+        ${Object.keys(CATS).filter(k=>k!=="custom"&&k!=="favoritos"&&k!=="prontas").map(k=>`<option value="${k}" ${existing&&existing.cat===k?"selected":""}>${CATS[k].icon} ${CATS[k].label}</option>`).join("")}
       </select>
     </div>
     <p class="desc" style="margin-top:6px;">Informe os valores nutricionais para <b>100 g</b> do alimento.</p>
